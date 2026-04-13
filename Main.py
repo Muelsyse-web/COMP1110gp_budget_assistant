@@ -36,7 +36,7 @@ class FinanceSystem:
         self.records = Input.read_input("data.json", "json")
         self.lm = LimitManager()
         
-        # 过滤器状态 (Filters)
+        # Filters status
         self.scale = "All"
         self.target_date = None # {"year": 2026, "month": 2} 等
         self.category_filter = "All"
@@ -48,10 +48,10 @@ class FinanceSystem:
         print("\n[System] Data saved successfully.")
 
     def get_filtered_records(self):
-        """核心数据联动引擎：根据 T, C, R 的设置交叉过滤数据"""
+        """Core data linkage engine: Cross-filter data based on the Settings of T, C, and R"""
         filtered = []
         for r in self.records:
-            # 1. 过滤时间 (T)
+            # 1. time (T)
             if self.scale == "Year" and self.target_date:
                 if r["year"] != self.target_date["year"]: continue
             elif self.scale == "Month" and self.target_date:
@@ -59,11 +59,11 @@ class FinanceSystem:
             elif self.scale == "Day" and self.target_date:
                 if r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]: continue
             
-            # 2. 过滤类别 (C)
+            # 2. category (C)
             if self.category_filter != "All" and r["category"] != self.category_filter:
                 continue
             
-            # 3. 过滤金额区间 (R)
+            # 3. range (R)
             if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]):
                 continue
                 
@@ -73,7 +73,7 @@ class FinanceSystem:
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         
-        # 获取被过滤后的动态数据
+        # Obtain the filtered dynamic data
         filtered_recs = self.get_filtered_records()
         exp = [r for r in filtered_recs if not r.get("is_income", False)]
         inc = [r for r in filtered_recs if r.get("is_income", False)]
@@ -81,7 +81,7 @@ class FinanceSystem:
         t_exp = sum(r["money"] for r in exp)
         t_inc = sum(r["money"] for r in inc)
         
-        # 格式化顶部菜单显示
+        # Format the top menu display
         td_str = "All"
         if self.scale == "Year" and self.target_date: td_str = f"{self.target_date['year']}"
         elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
@@ -98,7 +98,7 @@ class FinanceSystem:
         print(f"{exp_str:<35} | {inc_str}")
         print("-" * 73)
         
-        # 动态限额进度条
+        # Dynamic limit progress bar
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
@@ -136,14 +136,14 @@ class FinanceSystem:
             
             print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(alarm, 10)}| {bar}")
         
-        # 预测算法应基于特定类别在历史中的整体趋势，而不是仅仅在被过滤后的几条记录里瞎猜
+        # The prediction algorithm should be based on the overall trend of a specific category in history, rather than just making wild guesses from a few filtered records
         pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
         pred = Statistic.predict_budget(pred_recs)
         print(f"\n{C_INC}Predicted 30-Day Budget for '{self.category_filter}': ${pred:,.2f}{C_RESET}")
         print("\nPress any key to return...")
         get_char()
 
-    # --- 交互子菜单处理 ---
+    # --- Processing of interactive submenus ---
     def _handle_time_filter(self):
         print("\n--- Set Time Scale ---")
         print("[D]ay, [M]onth, [Y]ear, [A]ll")

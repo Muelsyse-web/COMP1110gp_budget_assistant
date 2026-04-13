@@ -1,130 +1,111 @@
 import os
 import sys
 import json
+import re
+import statistics # Fixed: Added missing import to resolve NameError
 from Limit import LimitManager
 import Input
 import Statistic
 
-# ANSI Color Codes [cite: 81, 82, 185-188]
-C_INCOME = '\033[92m'  # Green
-C_EXPENSE = '\033[91m' # Red
-C_ANOMALY = '\033[93m' # Yellow
-C_BAR = '\033[96m'     # Cyan
-C_RESET = '\033[0m'
+# ANSI Colors [cite: 366, 185-188]
+C_INC, C_EXP, C_ANO, C_BAR, C_RESET = '\033[92m', '\033[91m', '\033[93m', '\033[96m', '\033[0m'
 
 def get_char():
-    """Cross-platform non-blocking keypress listener."""
+    """Cross-platform one-letter trigger [cite: 224-228, 412]"""
     try:
         import msvcrt
         return msvcrt.getch().decode('utf-8').upper()
     except ImportError:
         import tty, termios
         fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+        old = termios.tcgetattr(fd)
         try:
-            tty.setraw(sys.stdin.fileno())
+            tty.setraw(fd)
             ch = sys.stdin.read(1)
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
         return ch.upper()
 
-def cjk_len(text):
-    """CJK Alignment: Chinese=2, English=1 """
-    return sum(2 if ord(c) > 127 else 1 for c in str(text))
-
 def pad_text(text, width):
-    """Pad string considering CJK character widths."""
-    current_len = cjk_len(text)
-    padding = width - current_len
-    return str(text) + (" " * max(0, padding))
+    """Correct padding by ignoring ANSI escape codes for width calculation [cite: 218]"""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    plain = ansi_escape.sub('', str(text))
+    # Chinese chars count as 2, English as 1
+    curr_len = sum(2 if ord(c) > 127 else 1 for c in plain)
+    return str(text) + (" " * max(0, width - curr_len))
 
 class FinanceSystem:
     def __init__(self):
-        self.all_records = Input.read_input("data.json", "json")
-        self.limit_mgr = LimitManager()
-        self.current_time_scale = "Month"
+        self.records = Input.read_input("data.json", "json")
+        self.lm = LimitManager()
+        self.scale = "Month"
         
-    def save_data(self):
-        """Data Persistence [cite: 84]"""
+    def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
-            json.dump(self.all_records, f, indent=4)
+            json.dump(self.records, f, indent=4)
 
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
+        exp = [r for r in self.records if not r["is_income"]]
+        inc = [r for r in self.records if r["is_income"]]
         
-        # Split records [cite: 10, 104, 106]
-        expenses = [r for r in self.all_records if not r.get("is_income")]
-        income = [r for r in self.all_records if r.get("is_income")]
+        t_exp, t_inc = sum(r["money"] for r in exp), sum(r["money"] for r in inc)
         
-        total_exp = sum(r["amount"] for r in expenses)
-        total_inc = sum(r["amount"] for r in income)
+        print("="*65)
+        print(f"[T]Scale: {self.scale} | [L]Limits | [I]nput | [Y]Details | [Q]uit")
+        print("="*65)
+        print(f"{C_EXP}Total Expenses: ${t_exp:,.2f}{C_RESET}")
+        print(f"{C_INC}Total Income:   ${t_inc:,.2f}{C_RESET}")
         
-        print("="*60)
-        print(f"[T]Time: {self.current_time_scale} | [C] Cat: All | [A] Range: All | [L]Limits | [I]nput [Q]uit") # [cite: 66, 152]
-        print("="*60)
-        print(f"{C_EXPENSE}Total Exp: ${total_exp:,.2f}{C_RESET}") # [cite: 68]
-        print(f"{C_INCOME}Total Inc: ${total_inc:,.2f}{C_RESET}") # [cite: 69]
-        print("Real-time Limit Progress:") # [cite: 70]
-        
-        # Dummy limit check for display
-        self.limit_mgr.set_time_limit("m", 1000)
-        is_exc, ratio, rem = self.limit_mgr.check_limit(expenses, income, "time")
-        bar_len = int(ratio * 20)
+        # Fixed: Cap bar length to 20 to prevent overflow
+        is_exc, ratio, rem = self.lm.check_limit(exp, inc)
+        bar_len = min(20, int(ratio * 20))
+        color = C_EXP if is_exc else C_BAR
         bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}] {ratio*100:.0f}%"
-        print(f"Total (M): {C_BAR}{bar_str}{C_RESET} Remaining: ${rem:,.2f}")
-        
-        print("\nPress [Y] for Details") # [cite: 78]
+        print(f"Monthly Limit: {color}{bar_str}{C_RESET} Remaining: ${rem:,.2f}")
 
     def show_details(self):
-        expenses = [r for r in self.all_records if not r.get("is_income")]
-        if not expenses:
-            print("No records found for current filters") # [cite: 190]
-            get_char()
-            return
+        exp = [r for r in self.records if not r["is_income"]]
+        if not exp:
+            print("\nNo expenditures found.")
+            get_char(); return
             
-        mean_val = statistics.mean([r["amount"] for r in expenses]) if expenses else 0
-        std_dev = statistics.stdev([r["amount"] for r in expenses]) if len(expenses) > 1 else 0
-        max_val = max((r["amount"] for r in expenses), default=0)
+        m_list = [r["money"] for r in exp]
+        mean_v, std_v = statistics.mean(m_list), (statistics.stdev(m_list) if len(m_list)>1 else 0)
+        max_v = max(m_list)
 
-        print("\n" + "="*80)
-        print(f"{pad_text('Time', 12)}| {pad_text('Category', 15)}| {pad_text('Amount', 10)}| {pad_text('Alarm', 10)}| Bar Chart")
-        print("-" * 80)
+        print("\n" + pad_text("Date", 12) + "| " + pad_text("Category", 15) + "| " + pad_text("Money", 10) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
+        print("-" * 85)
         
-        for r in expenses:
-            date_str = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
-            amt_str = f"{r['amount']:.1f}"
+        for r in exp:
+            date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+            is_ano = Statistic.is_anomaly(r["money"], mean_v, std_v)
+            alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
+            bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
             
-            is_anom = Statistic.is_anomaly(r["amount"], mean_val, std_dev)
-            alarm_str = f"{C_ANOMALY}ANOMALY{C_RESET}" if is_anom else "Normal" # [cite: 172]
-            
-            bar_chart = f"{C_BAR}{Statistic.generate_barchart(r['amount'], max_val)}{C_RESET}"
-            
-            # Using custom pad_text for CJK safety
-            print(f"{pad_text(date_str, 12)}| {pad_text(r['category'], 15)}| {pad_text(amt_str, 10)}| {pad_text(is_anom and 'ANOMALY' or 'Normal', 10)}| {bar_chart}")
+            print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(r['money'], 10)}| {pad_text(alarm, 10)}| {bar}")
         
+        print(f"\n{C_INC}Predicted Next Month Budget: ${Statistic.predict_budget(self.records):,.2f}{C_RESET}")
         get_char()
 
     def run(self):
         while True:
             self.draw_dashboard()
-            choice = get_char()
-            
-            if choice == 'Q':
-                self.save_data()
-                break
-            elif choice == 'T':
-                # Cycle time logic [cite: 54]
-                times = ["Day", "Week", "Month", "Year", "All"]
-                idx = times.index(self.current_time_scale)
-                self.current_time_scale = times[(idx + 1) % len(times)]
-            elif choice == 'I': # [cite: 58]
-                new_rec = Input.read_terminal()
-                if new_rec:
-                    self.all_records.append(new_rec)
-                    self.save_data()
-            elif choice == 'Y':
-                self.show_details()
+            cmd = get_char()
+            if cmd == 'Q': self.save(); break
+            if cmd == 'T': 
+                scales = ["Day", "Week", "Month", "Year", "All"]
+                self.scale = scales[(scales.index(self.scale)+1)%5]
+            if cmd == 'Y': self.show_details()
+            if cmd == 'I':
+                sub = input("\n[F]ile or [T]erminal? ").upper()
+                if sub == 'F':
+                    path = input("Enter path: ")
+                    self.records.extend(Input.read_input(path, "txt"))
+                else:
+                    rec = Input.read_terminal()
+                    if rec: self.records.append(rec)
+                self.save()
 
 if __name__ == "__main__":
-    app = FinanceSystem()
-    app.run()
+    FinanceSystem().run()

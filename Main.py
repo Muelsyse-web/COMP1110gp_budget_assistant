@@ -2,16 +2,15 @@ import os
 import sys
 import json
 import re
-import statistics # Fixed: Added missing import to resolve NameError
+import statistics 
 from Limit import LimitManager
 import Input
 import Statistic
 
-# ANSI Colors [cite: 366, 185-188]
+# ANSI Colors
 C_INC, C_EXP, C_ANO, C_BAR, C_RESET = '\033[92m', '\033[91m', '\033[93m', '\033[96m', '\033[0m'
 
 def get_char():
-    """Cross-platform one-letter trigger [cite: 224-228, 412]"""
     try:
         import msvcrt
         return msvcrt.getch().decode('utf-8').upper()
@@ -27,10 +26,8 @@ def get_char():
         return ch.upper()
 
 def pad_text(text, width):
-    """Correct padding by ignoring ANSI escape codes for width calculation [cite: 218]"""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     plain = ansi_escape.sub('', str(text))
-    # Chinese chars count as 2, English as 1
     curr_len = sum(2 if ord(c) > 127 else 1 for c in plain)
     return str(text) + (" " * max(0, width - curr_len))
 
@@ -43,36 +40,46 @@ class FinanceSystem:
     def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(self.records, f, indent=4)
+        print("\n[System] Data saved successfully.")
 
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
-        exp = [r for r in self.records if not r["is_income"]]
-        inc = [r for r in self.records if r["is_income"]]
+        exp = [r for r in self.records if not r.get("is_income", False)]
+        inc = [r for r in self.records if r.get("is_income", False)]
         
-        t_exp, t_inc = sum(r["money"] for r in exp), sum(r["money"] for r in inc)
+        t_exp = sum(r["money"] for r in exp)
+        t_inc = sum(r["money"] for r in inc)
         
-        print("="*65)
-        print(f"[T]Scale: {self.scale} | [L]Limits | [I]nput | [Y]Details | [Q]uit")
-        print("="*65)
-        print(f"{C_EXP}Total Expenses: ${t_exp:,.2f}{C_RESET}")
-        print(f"{C_INC}Total Income:   ${t_inc:,.2f}{C_RESET}")
+        print("============================================================")
+        print(f"[T]Time:{self.scale:<5} | [C]Cat:All | [A]Range:All | [L]Limits")
+        print("============================================================")
         
-        # Fixed: Cap bar length to 20 to prevent overflow
+        exp_str = f"{C_EXP}Total Exp: ${t_exp:,.2f}{C_RESET}"
+        inc_str = f"{C_INC}Total Inc: ${t_inc:,.2f}{C_RESET}"
+        print(f"{exp_str:<35} | {inc_str}")
+        print("-" * 60)
+        
+        print("Real-time Limit Progress:")
         is_exc, ratio, rem = self.lm.check_limit(exp, inc)
         bar_len = min(20, int(ratio * 20))
         color = C_EXP if is_exc else C_BAR
         bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}] {ratio*100:.0f}%"
-        print(f"Monthly Limit: {color}{bar_str}{C_RESET} Remaining: ${rem:,.2f}")
+        limit_val = self.lm.time_limits.get("m", 1000.0) 
+        print(f"Monthly Limit: {color}{bar_str}{C_RESET} (${t_exp:,.2f}/${limit_val:,.2f})")
+        print("-" * 60)
+        
+        print("Press [Y] for Details | [I] Input Data | [Q] Exit System")
 
     def show_details(self):
-        exp = [r for r in self.records if not r["is_income"]]
+        exp = [r for r in self.records if not r.get("is_income", False)]
         if not exp:
             print("\nNo expenditures found.")
             get_char(); return
             
         m_list = [r["money"] for r in exp]
-        mean_v, std_v = statistics.mean(m_list), (statistics.stdev(m_list) if len(m_list)>1 else 0)
-        max_v = max(m_list)
+        mean_v = statistics.mean(m_list)
+        std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
+        max_v = max(m_list) if m_list else 0
 
         print("\n" + pad_text("Date", 12) + "| " + pad_text("Category", 15) + "| " + pad_text("Money", 10) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
         print("-" * 85)
@@ -83,29 +90,51 @@ class FinanceSystem:
             alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
             bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
             
-            print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(r['money'], 10)}| {pad_text(alarm, 10)}| {bar}")
+            print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(alarm, 10)}| {bar}")
         
-        print(f"\n{C_INC}Predicted Next Month Budget: ${Statistic.predict_budget(self.records):,.2f}{C_RESET}")
+        pred = Statistic.predict_budget(self.records)
+        print(f"\n{C_INC}Predicted Next Month Budget: ${pred:,.2f}{C_RESET}")
+        print("\nPress any key to return...")
         get_char()
 
     def run(self):
-        while True:
-            self.draw_dashboard()
-            cmd = get_char()
-            if cmd == 'Q': self.save(); break
-            if cmd == 'T': 
-                scales = ["Day", "Week", "Month", "Year", "All"]
-                self.scale = scales[(scales.index(self.scale)+1)%5]
-            if cmd == 'Y': self.show_details()
-            if cmd == 'I':
-                sub = input("\n[F]ile or [T]erminal? ").upper()
-                if sub == 'F':
-                    path = input("Enter path: ")
-                    self.records.extend(Input.read_input(path, "txt"))
-                else:
-                    rec = Input.read_terminal()
-                    if rec: self.records.append(rec)
-                self.save()
+        try:
+            while True:
+                self.draw_dashboard()
+                cmd = get_char()
+                
+                if cmd == 'Q': 
+                    break
+                elif cmd == 'T': 
+                    scales = ["Day", "Week", "Month", "Year", "All"]
+                    self.scale = scales[(scales.index(self.scale)+1)%5]
+                elif cmd == 'Y': 
+                    self.show_details()
+                elif cmd == 'I':
+                    print("\n")
+                    while True:
+                        sub = input("[F]ile or [T]erminal? (F/T): ").strip().upper()
+                        if sub in ['F', 'T']:
+                            break
+                        print("Error: Please enter 'F' or 'T'.")
+                    
+                    if sub == 'F':
+                        path = input("Enter file path: ").strip()
+                        if path:
+                            self.records.extend(Input.read_input(path, "txt"))
+                    else:
+                        rec = Input.read_terminal()
+                        if rec: 
+                            self.records.append(rec)
+                    self.save()
+        except KeyboardInterrupt:
+            # Handles unexpected Ctrl+C termination smoothly
+            print("\n[System] Interrupted by user.")
+        finally:
+            # Guarantee data is saved even if it crashes
+            self.save()
+            print("System shutting down securely...")
 
 if __name__ == "__main__":
-    FinanceSystem().run()
+    app = FinanceSystem()
+    app.run()

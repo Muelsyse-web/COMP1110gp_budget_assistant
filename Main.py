@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import statistics 
+from datetime import datetime
 from Limit import LimitManager
 import Input
 import Statistic
@@ -35,10 +36,8 @@ class FinanceSystem:
     def __init__(self):
         self.records = Input.read_input("data.json", "json")
         self.lm = LimitManager()
-        
-        # Filters status
         self.scale = "All"
-        self.target_date = None # {"year": 2026, "month": 2} 等
+        self.target_date = None
         self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
         
@@ -48,10 +47,8 @@ class FinanceSystem:
         print("\n[System] Data saved successfully.")
 
     def get_filtered_records(self):
-        """Core data linkage engine: Cross-filter data based on the Settings of T, C, and R"""
         filtered = []
         for r in self.records:
-            # 1. time (T)
             if self.scale == "Year" and self.target_date:
                 if r["year"] != self.target_date["year"]: continue
             elif self.scale == "Month" and self.target_date:
@@ -59,11 +56,9 @@ class FinanceSystem:
             elif self.scale == "Day" and self.target_date:
                 if r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]: continue
             
-            # 2. category (C)
             if self.category_filter != "All" and r["category"] != self.category_filter:
                 continue
             
-            # 3. range (R)
             if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]):
                 continue
                 
@@ -73,7 +68,6 @@ class FinanceSystem:
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         
-        # Obtain the filtered dynamic data
         filtered_recs = self.get_filtered_records()
         exp = [r for r in filtered_recs if not r.get("is_income", False)]
         inc = [r for r in filtered_recs if r.get("is_income", False)]
@@ -81,7 +75,6 @@ class FinanceSystem:
         t_exp = sum(r["money"] for r in exp)
         t_inc = sum(r["money"] for r in inc)
         
-        # Format the top menu display
         td_str = "All"
         if self.scale == "Year" and self.target_date: td_str = f"{self.target_date['year']}"
         elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
@@ -98,7 +91,6 @@ class FinanceSystem:
         print(f"{exp_str:<35} | {inc_str}")
         print("-" * 73)
         
-        # Dynamic limit progress bar
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
@@ -114,36 +106,128 @@ class FinanceSystem:
         print("Press [Y] Details | [I] Input Data | [Q] Exit System")
 
     def show_details(self):
-        filtered_recs = self.get_filtered_records()
-        exp = [r for r in filtered_recs if not r.get("is_income", False)]
-        if not exp:
-            print("\nNo expenditures found for current filters.")
-            get_char(); return
-            
-        m_list = [r["money"] for r in exp]
-        mean_v = statistics.mean(m_list)
-        std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
-        max_v = max(m_list) if m_list else 0
+        sort_mode = "original"
+        sort_desc = False
 
-        print("\n" + pad_text("Date", 12) + "| " + pad_text("Category", 15) + "| " + pad_text("Money", 10) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
-        print("-" * 85)
-        
-        for r in exp:
-            date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
-            is_ano = Statistic.is_anomaly(r["money"], mean_v, std_v)
-            alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
-            bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            filtered_recs = self.get_filtered_records()
+            exp = [r for r in filtered_recs if not r.get("is_income", False)]
             
-            print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(alarm, 10)}| {bar}")
-        
-        # The prediction algorithm should be based on the overall trend of a specific category in history, rather than just making wild guesses from a few filtered records
-        pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
-        pred = Statistic.predict_budget(pred_recs)
-        print(f"\n{C_INC}Predicted 30-Day Budget for '{self.category_filter}': ${pred:,.2f}{C_RESET}")
-        print("\nPress any key to return...")
-        get_char()
+            if not exp:
+                print("\nNo expenditures found for current filters.")
+                get_char()
+                return
 
-    # --- Processing of interactive submenus ---
+            if sort_mode == "time":
+                exp.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
+            elif sort_mode == "money":
+                exp.sort(key=lambda x: x["money"], reverse=sort_desc)
+            elif sort_mode == "alphabet":
+                exp.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
+
+            m_list = [r["money"] for r in exp]
+            mean_v = statistics.mean(m_list)
+            std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
+            max_v = max(m_list) if m_list else 0
+
+            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", 14) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", 18) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
+            print("-" * 110)
+            
+            warnings = []
+
+            for i, r in enumerate(exp):
+                date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                
+                # Check for corrupted JSON dates and generate targeted UI warnings
+                try:
+                    datetime(r['year'], r['month'], r['day'])
+                except ValueError as e:
+                    warnings.append(f"{C_EXP}ValueError: *[Idx {i}]*, {str(e)}{C_RESET}")
+
+                is_ano = Statistic.is_anomaly(r["money"], mean_v, std_v, r.get("ignore_anomaly", False))
+                
+                if r.get("ignore_anomaly", False):
+                    alarm = f"{C_INC}Ignored{C_RESET}"
+                else:
+                    alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
+                    
+                bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
+                desc = r.get("description", "")[:16]
+                
+                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], 14)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, 18)}| {pad_text(alarm, 10)}| {bar}")
+            
+            # Display any date format warnings caught during the rendering loop
+            if warnings:
+                print(f"\n{C_EXP}--- Data format Warnings ---{C_RESET}")
+                for w in warnings:
+                    print(w)
+
+            pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
+            pred = Statistic.predict_budget(pred_recs)
+            print(f"\n{C_INC}Predicted 30-Day Budget for '{self.category_filter}': ${pred:,.2f}{C_RESET}")
+            
+            print("\n--- Details Options ---")
+            print("[S]ort Table | [E]dit Record (Modify/Alarm) | [Q]uit to Dashboard")
+            cmd = get_char()
+            
+            if cmd == 'Q':
+                break
+            elif cmd == 'S':
+                print("\nSort by: [O]riginal, [A]lphabet(Cat), [T]ime, [M]oney")
+                s_cmd = get_char()
+                if s_cmd in ['T', 'M', 'A']:
+                    print("Order: [A]scending or [D]escending?")
+                    o_cmd = get_char()
+                    sort_desc = (o_cmd == 'D')
+                    if s_cmd == 'T': sort_mode = "time"
+                    elif s_cmd == 'M': sort_mode = "money"
+                    elif s_cmd == 'A': sort_mode = "alphabet"
+                elif s_cmd == 'O':
+                    sort_mode = "original"
+            elif cmd == 'E':
+                idx_str = input("\nEnter Index (Idx) number to edit: ").strip()
+                if idx_str.isdigit() and 0 <= int(idx_str) < len(exp):
+                    target_r = exp[int(idx_str)]
+                    print(f"\nEditing Idx {idx_str}: {target_r['year']}-{target_r['month']:02d}-{target_r['day']:02d} | {target_r['category']} | ${target_r['money']}")
+                    print("What would you like to edit?")
+                    print("[D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [A]larm Toggle | [Q]Cancel")
+                    e_cmd = get_char()
+                    
+                    if e_cmd == 'D':
+                        new_date = input("Enter new date (YYYY-MM-DD): ").strip()
+                        dp = Input.validate_date(new_date, "Edit Input")
+                        if dp:
+                            target_r["year"], target_r["month"], target_r["day"] = dp[0], dp[1], dp[2]
+                            self.save()
+                    elif e_cmd == 'C':
+                        new_cat = input("Enter new Category: ").strip()
+                        if new_cat:
+                            target_r["category"] = new_cat
+                            self.save()
+                    elif e_cmd == 'M':
+                        try:
+                            new_money = float(input("Enter new Money amount: ").strip())
+                            if new_money > 0:
+                                target_r["money"] = new_money
+                                self.save()
+                            else:
+                                print("Amount must be positive.")
+                                get_char()
+                        except ValueError:
+                            print("Invalid amount.")
+                            get_char()
+                    elif e_cmd == 'I':
+                        new_desc = input("Enter new Description: ").strip()
+                        target_r["description"] = new_desc
+                        self.save()
+                    elif e_cmd == 'A':
+                        target_r["ignore_anomaly"] = not target_r.get("ignore_anomaly", False)
+                        self.save()
+                else:
+                    print("Invalid index.")
+                    get_char()
+
     def _handle_time_filter(self):
         print("\n--- Set Time Scale ---")
         print("[D]ay, [M]onth, [Y]ear, [A]ll")
@@ -164,10 +248,13 @@ class FinanceSystem:
                 self.target_date = {"year": int(parts[0]), "month": int(parts[1])}
         elif sub == 'D':
             d = input("Enter Day (YYYY-MM-DD): ").strip()
-            dp = Input.validate_date(d)
+            dp = Input.validate_date(d, "Filter Input")
             if dp:
                 self.scale = "Day"
                 self.target_date = {"year": dp[0], "month": dp[1], "day": dp[2]}
+        else:
+            print("Invalid input.")
+            get_char()
 
     def _handle_category_filter(self):
         cats = list(set(r["category"] for r in self.records))
@@ -236,7 +323,7 @@ class FinanceSystem:
                     self._handle_time_filter()
                 elif cmd == 'C':
                     self._handle_category_filter()
-                elif cmd == 'R':  # Note: A is now R for Range
+                elif cmd == 'R': 
                     self._handle_range_filter()
                 elif cmd == 'L':
                     self._handle_limit_menu()

@@ -12,10 +12,13 @@ def calculate_zscore(value, mean, std_dev):
         return 0.0
     return (value - mean) / std_dev
 
-def is_anomaly(value, mean, std_dev):
-    """Detect outliers based on Z-score threshold of 2.0"""
+def is_anomaly(value, mean, std_dev, ignore_flag=False):
+    """Detect outliers based on Z-score threshold of > 1.96 (95% CI). Honors manual UI overrides."""
+    if ignore_flag:
+        return False
     z = calculate_zscore(value, mean, std_dev)
-    return abs(z) >= 2.0
+    # Updated to 1.96 to align with the 95% Confidence Interval
+    return abs(z) > 1.96
 
 def generate_barchart(money, max_money):
     """Logarithmic Scaling to handle extreme value differences"""
@@ -47,7 +50,7 @@ def predict_budget(records):
     mean_val = statistics.mean(money_list)
     std_dev = statistics.stdev(money_list)
 
-    normal_records = [r for r in records if not r.get("is_income", False) and not is_anomaly(r["money"], mean_val, std_dev)]
+    normal_records = [r for r in records if not r.get("is_income", False) and not is_anomaly(r["money"], mean_val, std_dev, r.get("ignore_anomaly", False))]
     if not normal_records:
         return 0.0
 
@@ -61,9 +64,16 @@ def predict_budget(records):
 
     momentum = (second_avg / first_avg) if first_avg > EPSILON else 1.0
 
-    start = datetime(normal_records[0]["year"], normal_records[0]["month"], normal_records[0]["day"])
-    end = datetime(normal_records[-1]["year"], normal_records[-1]["month"], normal_records[-1]["day"])
-    days = (end - start).days + 1
+    # Bulletproof fallback to prevent crashes from corrupted dates
+    try:
+        start = datetime(normal_records[0]["year"], normal_records[0]["month"], normal_records[0]["day"])
+        end = datetime(normal_records[-1]["year"], normal_records[-1]["month"], normal_records[-1]["day"])
+        days = (end - start).days + 1
+    except ValueError:
+        # Fallback approximation: calculate days mathematically if datetime throws an error
+        days = (normal_records[-1]["year"] - normal_records[0]["year"]) * 365 + \
+               (normal_records[-1]["month"] - normal_records[0]["month"]) * 30 + \
+               (normal_records[-1]["day"] - normal_records[0]["day"]) + 1
 
     daily_burn = sum(r["money"] for r in normal_records) / days if days > 0 else 0.0
     predicted = (daily_burn * 30) * momentum

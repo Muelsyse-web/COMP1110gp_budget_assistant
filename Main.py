@@ -36,8 +36,9 @@ class FinanceSystem:
         self.records = Input.read_input("data.json", "json")
         self.lm = LimitManager()
         
+        # Filters status
         self.scale = "All"
-        self.target_date = None
+        self.target_date = None # {"year": 2026, "month": 2} 等
         self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
         
@@ -47,8 +48,10 @@ class FinanceSystem:
         print("\n[System] Data saved successfully.")
 
     def get_filtered_records(self):
+        """Core data linkage engine: Cross-filter data based on the Settings of T, C, and R"""
         filtered = []
         for r in self.records:
+            # 1. time (T)
             if self.scale == "Year" and self.target_date:
                 if r["year"] != self.target_date["year"]: continue
             elif self.scale == "Month" and self.target_date:
@@ -56,10 +59,12 @@ class FinanceSystem:
             elif self.scale == "Day" and self.target_date:
                 if r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]: continue
             
-            if self.category_filter != "All" and r.get("category") != self.category_filter:
+            # 2. category (C)
+            if self.category_filter != "All" and r["category"] != self.category_filter:
                 continue
             
-            if not (self.range_filter[0] <= r.get("money", 0) <= self.range_filter[1]):
+            # 3. range (R)
+            if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]):
                 continue
                 
             filtered.append(r)
@@ -68,13 +73,15 @@ class FinanceSystem:
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         
+        # Obtain the filtered dynamic data
         filtered_recs = self.get_filtered_records()
         exp = [r for r in filtered_recs if not r.get("is_income", False)]
         inc = [r for r in filtered_recs if r.get("is_income", False)]
         
-        t_exp = sum(r.get("money", 0) for r in exp)
-        t_inc = sum(r.get("money", 0) for r in inc)
+        t_exp = sum(r["money"] for r in exp)
+        t_inc = sum(r["money"] for r in inc)
         
+        # Format the top menu display
         td_str = "All"
         if self.scale == "Year" and self.target_date: td_str = f"{self.target_date['year']}"
         elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
@@ -91,6 +98,7 @@ class FinanceSystem:
         print(f"{exp_str:<35} | {inc_str}")
         print("-" * 73)
         
+        # Dynamic limit progress bar
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
@@ -117,9 +125,8 @@ class FinanceSystem:
         std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
         max_v = max(m_list) if m_list else 0
 
-        # Description column added to header
-        print("\n" + pad_text("Date", 12) + "| " + pad_text("Category", 15) + "| " + pad_text("Money", 10) + "| " + pad_text("Alarm", 10) + "| " + pad_text("Description", 20) + "| Bar Chart")
-        print("-" * 110)
+        print("\n" + pad_text("Date", 12) + "| " + pad_text("Category", 15) + "| " + pad_text("Money", 10) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
+        print("-" * 85)
         
         for r in exp:
             date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
@@ -127,19 +134,16 @@ class FinanceSystem:
             alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
             bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
             
-            # Extract description and truncate if it's too long
-            desc = r.get("description", "")
-            if len(desc) > 18:
-                desc = desc[:15] + "..."
-            
-            print(f"{pad_text(date, 12)}| {pad_text(r.get('category',''), 15)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(alarm, 10)}| {pad_text(desc, 20)}| {bar}")
+            print(f"{pad_text(date, 12)}| {pad_text(r['category'], 15)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(alarm, 10)}| {bar}")
         
-        pred_recs = [r for r in self.records if (self.category_filter == "All" or r.get("category") == self.category_filter)]
+        # The prediction algorithm should be based on the overall trend of a specific category in history, rather than just making wild guesses from a few filtered records
+        pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
         pred = Statistic.predict_budget(pred_recs)
         print(f"\n{C_INC}Predicted 30-Day Budget for '{self.category_filter}': ${pred:,.2f}{C_RESET}")
         print("\nPress any key to return...")
         get_char()
 
+    # --- Processing of interactive submenus ---
     def _handle_time_filter(self):
         print("\n--- Set Time Scale ---")
         print("[D]ay, [M]onth, [Y]ear, [A]ll")
@@ -166,7 +170,7 @@ class FinanceSystem:
                 self.target_date = {"year": dp[0], "month": dp[1], "day": dp[2]}
 
     def _handle_category_filter(self):
-        cats = list(set(r.get("category") for r in self.records if "category" in r))
+        cats = list(set(r["category"] for r in self.records))
         print("\n--- Select Category ---")
         print("0: All Categories")
         for i, c in enumerate(cats, 1):
@@ -205,21 +209,10 @@ class FinanceSystem:
                 if scale in ['d', 'w', 'm', 'y']:
                     amt = float(input("Enter limit amount: "))
                     self.lm.set_limit("time", scale, amt)
-                    
-                    scale_map = {'d': 'Day', 'w': 'Week', 'm': 'Month', 'y': 'Year'}
-                    self.scale = scale_map[scale]
-                    print(f"\n[Success] Limit set! Dashboard Scale automatically changed to {self.scale}.")
-                    input("Press Enter to return...") 
-                    
             elif choice == '2':
                 cat = input("Enter Category Name (e.g. Food): ").strip()
                 amt = float(input("Enter limit amount: "))
                 self.lm.set_limit("cat", cat, amt)
-                
-                self.category_filter = cat
-                print(f"\n[Success] Limit set! Dashboard Category automatically changed to {self.category_filter}.")
-                input("Press Enter to return...") 
-
             elif choice == '3':
                 t_c = input("Remove [T]ime or [C]ategory limit? (T/C): ").strip().upper()
                 if t_c == 'T':
@@ -230,7 +223,6 @@ class FinanceSystem:
                     self.lm.set_limit("cat", cat, 0.0)
         except ValueError:
             print("Error: Invalid amount.")
-            input("Press Enter to return...")
 
     def run(self):
         try:
@@ -244,7 +236,7 @@ class FinanceSystem:
                     self._handle_time_filter()
                 elif cmd == 'C':
                     self._handle_category_filter()
-                elif cmd == 'R':  
+                elif cmd == 'R':  # Note: A is now R for Range
                     self._handle_range_filter()
                 elif cmd == 'L':
                     self._handle_limit_menu()

@@ -1,49 +1,3 @@
-import json
-import os
-from datetime import datetime
-
-def validate_date(date_str):
-    """Strictly control date format [yyyy-mm-dd] and check validity"""
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.year, dt.month, dt.day
-    except ValueError:
-        return None
-
-def read_input(file_path, mode="json"):
-    """Reads data from external files safely"""
-    records = []
-    if not os.path.exists(file_path):
-        return records
-        
-    try:
-        if mode == "json":
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                if content:
-                    records = json.loads(content)
-        elif mode == "txt":
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    parts = line.strip().split(" ", 3)
-                    if len(parts) >= 3:
-                        date_parts = validate_date(parts[0])
-                        if date_parts:
-                            try:
-                                money_val = float(parts[2])
-                                if money_val > 0: # Ensure positive
-                                    records.append({
-                                        "year": date_parts[0], "month": date_parts[1], "day": date_parts[2],
-                                        "category": parts[1], "money": money_val,
-                                        "description": parts[3] if len(parts)==4 else "",
-                                        "is_income": False
-                                    })
-                            except ValueError:
-                                pass
-    except Exception as e:
-        print(f"File reading error: {e}")
-    return records
-
 def read_terminal():
     """Manual input with strict validation for I/E and positive money"""
     print("\n--- Data Input ---")
@@ -59,6 +13,7 @@ def read_terminal():
     raw = input("Enter [yyyy-mm-dd] [category] [money] [description]: ").strip()
     if not raw:
         print("Error: Empty input.")
+        input("Press Enter to continue...") # FIX 2: Pause to let user read error
         return None
         
     parts = raw.split(" ", 3)
@@ -69,6 +24,7 @@ def read_terminal():
                  money_val = float(parts[2])
                  if money_val <= 0:
                      print("Error: Money amount must be greater than 0.")
+                     input("Press Enter to continue...")
                      return None
                  return {
                      "year": date_parts[0], "month": date_parts[1], "day": date_parts[2],
@@ -78,7 +34,14 @@ def read_terminal():
                  }
              except ValueError:
                  print("Error: Money must be a valid number.")
+                 input("Press Enter to continue...")
                  return None
+         else:
+             # FIX 2: Explicit error for invalid calendar dates
+             print(f"Error: Invalid date '{parts[0]}'. The date does not exist (e.g. 2026-02-30) or format is wrong.")
+             input("Press Enter to continue...")
+             return None
                  
-    print("Error: Invalid format or incorrect date. Make sure you use yyyy-mm-dd.")
+    print("Error: Missing fields. Format must be [yyyy-mm-dd] [category] [money] [description].")
+    input("Press Enter to continue...")
     return None

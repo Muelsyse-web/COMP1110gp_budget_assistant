@@ -2,12 +2,17 @@ import json
 import os
 from datetime import datetime
 
-def validate_date(date_str):
+# ANSI Colors for Error Handling
+C_EXP, C_RESET = '\033[91m', '\033[0m'
+
+def validate_date(date_str, context=""):
     """Strictly control date format [yyyy-mm-dd] and check validity"""
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         return dt.year, dt.month, dt.day
-    except ValueError:
+    except ValueError as e:
+        if context:
+            print(f"{C_EXP}ValueError: *{context}*, {str(e)}{C_RESET}")
         return None
 
 def read_input(file_path, mode="json"):
@@ -21,13 +26,17 @@ def read_input(file_path, mode="json"):
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
                 if content:
+                    # We load all JSON data, even with corrupted dates, 
+                    # so the user can fix them via the UI's Edit Record function.
                     records = json.loads(content)
+                            
         elif mode == "txt":
             with open(file_path, 'r', encoding='utf-8') as f:
+                line_num = 1
                 for line in f:
                     parts = line.strip().split(" ", 3)
                     if len(parts) >= 3:
-                        date_parts = validate_date(parts[0])
+                        date_parts = validate_date(parts[0], f"[Line {line_num}]")
                         if date_parts:
                             try:
                                 money_val = float(parts[2])
@@ -36,10 +45,12 @@ def read_input(file_path, mode="json"):
                                         "year": date_parts[0], "month": date_parts[1], "day": date_parts[2],
                                         "category": parts[1], "money": money_val,
                                         "description": parts[3] if len(parts)==4 else "",
-                                        "is_income": False
+                                        "is_income": False,
+                                        "ignore_anomaly": False
                                     })
                             except ValueError:
                                 pass
+                    line_num += 1
     except Exception as e:
         print(f"File reading error: {e}")
     return records
@@ -63,7 +74,7 @@ def read_terminal():
         
     parts = raw.split(" ", 3)
     if len(parts) >= 3:
-         date_parts = validate_date(parts[0])
+         date_parts = validate_date(parts[0], "[Terminal Input]")
          if date_parts:
              try:
                  money_val = float(parts[2])
@@ -74,7 +85,8 @@ def read_terminal():
                      "year": date_parts[0], "month": date_parts[1], "day": date_parts[2],
                      "category": parts[1], "money": money_val,
                      "description": parts[3] if len(parts)==4 else "",
-                     "is_income": is_inc
+                     "is_income": is_inc,
+                     "ignore_anomaly": False
                  }
              except ValueError:
                  print("Error: Money must be a valid number.")

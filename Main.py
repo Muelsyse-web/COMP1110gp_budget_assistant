@@ -94,9 +94,15 @@ class FinanceSystem:
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
+        # In Main.py -> draw_dashboard()
+# Change the logic where limit_val <= 1e-9 is handled:
+
         if limit_val <= 1e-9:
-            print(f"Limit ({limit_name}): {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
-        else:
+            if self.scale == "All" and self.category_filter == "All":
+                print(f"Limit: {C_BAR}[ N/A in 'All' View ]{C_RESET} (Switch Time/Cat to see specific limits)")
+            else:
+        print(f"Limit ({limit_name}): {C_BAR}[ Not Set ]{C_RESET}")
+            else:
             bar_len = min(20, int(ratio * 20))
             color = C_EXP if is_exc else C_BAR
             bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}] {ratio*100:.0f}%"

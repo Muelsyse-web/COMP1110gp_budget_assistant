@@ -11,6 +11,16 @@ import Statistic
 # ANSI Colors
 C_INC, C_EXP, C_ANO, C_BAR, C_RESET = '\033[92m', '\033[91m', '\033[93m', '\033[96m', '\033[0m'
 
+def get_visual_len(text):
+    """Calculates the visual width of a string in the terminal, counting CJK characters as 2 spaces."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    plain = ansi_escape.sub('', str(text))
+    return sum(2 if ord(c) > 127 else 1 for c in plain)
+
+def pad_text(text, width):
+    curr_len = get_visual_len(text)
+    return str(text) + (" " * max(0, width - curr_len))
+
 def get_char():
     try:
         import msvcrt
@@ -25,12 +35,6 @@ def get_char():
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         return ch.upper()
-
-def pad_text(text, width):
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    plain = ansi_escape.sub('', str(text))
-    curr_len = sum(2 if ord(c) > 127 else 1 for c in plain)
-    return str(text) + (" " * max(0, width - curr_len))
 
 class FinanceSystem:
     def __init__(self):
@@ -134,15 +138,22 @@ class FinanceSystem:
             std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
             max_v = max(m_list) if m_list else 0
 
-            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", 14) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", 18) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
-            print("-" * 110)
+            # --- DYNAMIC WIDTH CALCULATION ---
+            # Find the maximum visual length among all descriptions, default to 15 if empty
+            max_desc_len = max([get_visual_len(r.get("description", "")) for r in exp]) if exp else 0
+            desc_width = max(15, max_desc_len + 2) # At least 15 wide, plus 2 spaces padding
+            
+            # Calculate total line width based on dynamic description column
+            total_line_width = 5 + 12 + 14 + 10 + desc_width + 10 + 20 + 14 # Added buffer for pipes and bar chart
+            
+            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", 14) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
+            print("-" * total_line_width)
             
             warnings = []
 
             for i, r in enumerate(exp):
                 date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
                 
-                # Check for corrupted JSON dates and generate targeted UI warnings
                 try:
                     datetime(r['year'], r['month'], r['day'])
                 except ValueError as e:
@@ -156,11 +167,12 @@ class FinanceSystem:
                     alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
                     
                 bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
-                desc = r.get("description", "")[:16]
                 
-                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], 14)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, 18)}| {pad_text(alarm, 10)}| {bar}")
+                # Full description is used, truncation removed
+                desc = r.get("description", "")
+                
+                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], 14)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
             
-            # Display any date format warnings caught during the rendering loop
             if warnings:
                 print(f"\n{C_EXP}--- Data format Warnings ---{C_RESET}")
                 for w in warnings:

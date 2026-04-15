@@ -101,7 +101,7 @@ class FinanceSystem:
             if self.scale == "All" and self.category_filter == "All":
                 print(f"Limit: {C_BAR}[ N/A in 'All' View ]{C_RESET} (Switch Time/Cat to see specific limits)")
             else:
-        print(f"Limit ({limit_name}): {C_BAR}[ Not Set ]{C_RESET}")
+                print(f"Limit ({limit_name}): {C_BAR}[ Not Set ]{C_RESET}")
             else:
             bar_len = min(20, int(ratio * 20))
             color = C_EXP if is_exc else C_BAR

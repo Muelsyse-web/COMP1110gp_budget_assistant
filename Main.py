@@ -139,14 +139,18 @@ class FinanceSystem:
             max_v = max(m_list) if m_list else 0
 
             # --- DYNAMIC WIDTH CALCULATION ---
-            # Find the maximum visual length among all descriptions, default to 15 if empty
+            # Description width
             max_desc_len = max([get_visual_len(r.get("description", "")) for r in exp]) if exp else 0
             desc_width = max(15, max_desc_len + 2) # At least 15 wide, plus 2 spaces padding
             
-            # Calculate total line width based on dynamic description column
-            total_line_width = 5 + 12 + 14 + 10 + desc_width + 10 + 20 + 14 # Added buffer for pipes and bar chart
+            # Category width
+            max_cat_len = max([get_visual_len(r.get("category", "")) for r in exp]) if exp else 0
+            cat_width = max(14, max_cat_len + 2) # At least 14 wide, plus 2 spaces padding
             
-            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", 14) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
+            # Calculate total line width based on dynamic columns
+            total_line_width = 5 + 12 + cat_width + 10 + desc_width + 10 + 20 + 14 
+            
+            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
             print("-" * total_line_width)
             
             warnings = []
@@ -168,10 +172,9 @@ class FinanceSystem:
                     
                 bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
                 
-                # Full description is used, truncation removed
                 desc = r.get("description", "")
                 
-                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], 14)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
+                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
             
             if warnings:
                 print(f"\n{C_EXP}--- Data format Warnings ---{C_RESET}")

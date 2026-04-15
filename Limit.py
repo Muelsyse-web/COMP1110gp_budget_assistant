@@ -25,15 +25,16 @@ class LimitManager:
             limit_val = self.category_limits.get(current_cat, 0.0)
             limit_name = f"Cat: {current_cat}"
         else:
-            # Otherwise, display the limit corresponding to the time scale
-            scale_map = {"Day": "d", "Week": "w", "Month": "m", "Year": "y", "All": "m"}
-            time_key = scale_map.get(current_scale, "m")
-            limit_val = self.time_limits.get(time_key, 0.0)
-            limit_name = current_scale
+            # Time logic: Only show if the scale matches a specific set limit (excludes "All")
+            scale_map = {"Day": "d", "Week": "w", "Month": "m", "Year": "y"}
+            time_key = scale_map.get(current_scale)
+            if time_key:
+                limit_val = self.time_limits.get(time_key, 0.0)
+                limit_name = current_scale
 
         # If the limit is 0 (not set), return the indicator
         if limit_val <= 1e-9: 
-            return False, 0.0, 0.0, limit_name, 0.0
+            return False, 0.0, 0.0, limit_name if limit_name else current_scale, 0.0
 
         ratio = total_exp / limit_val
         return ratio >= 1.0, ratio, max(0.0, limit_val - total_exp), limit_name, limit_val

@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import re
+import math
 import statistics 
 from datetime import datetime
 from Limit import LimitManager
@@ -10,6 +11,7 @@ import Statistic
 
 # ANSI Colors
 C_INC, C_EXP, C_ANO, C_BAR, C_RESET = '\033[92m', '\033[91m', '\033[93m', '\033[96m', '\033[0m'
+C_MAG = '\033[95m' # Magenta for Auto-Suggested Text
 
 def get_visual_len(text):
     """Calculates the visual width of a string in the terminal, counting CJK characters as 2 spaces."""
@@ -20,6 +22,15 @@ def get_visual_len(text):
 def pad_text(text, width):
     curr_len = get_visual_len(text)
     return str(text) + (" " * max(0, width - curr_len))
+
+def round_to_3sf(num):
+    """Rounds a number to 3 significant figures for psychological limit setting"""
+    if num == 0.0:
+        return 0.0
+    try:
+        return round(num, 3 - int(math.floor(math.log10(abs(num)))) - 1)
+    except ValueError:
+        return 0.0
 
 def get_char():
     try:
@@ -44,6 +55,8 @@ class FinanceSystem:
         self.target_date = None
         self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
+        self.auto_suggest = True # UI Toggle for Auto-Suggestions
+        self.pred_scale = "Auto" # Options: Auto, Monthly, Yearly, Weekly
         
     def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
@@ -69,6 +82,16 @@ class FinanceSystem:
             filtered.append(r)
         return filtered
 
+    def get_active_prior(self, scale_str):
+        """Fetches the correct limit prior specifically matched to the prediction scale"""
+        if self.category_filter != "All":
+            return self.lm.category_limits.get(self.category_filter, 0.0)
+        else:
+            if scale_str == "MONTHLY": return self.lm.time_limits.get("m", 0.0)
+            elif scale_str == "YEARLY": return self.lm.time_limits.get("y", 0.0)
+            elif scale_str == "WEEKLY": return self.lm.time_limits.get("w", 0.0)
+            return 0.0
+
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         
@@ -86,31 +109,74 @@ class FinanceSystem:
 
         r_str = f"{self.range_filter[0]:.0f}-{'inf' if self.range_filter[1] == float('inf') else f'{self.range_filter[1]:.0f}'}"
         
-        print("=========================================================================")
-        print(f"[T]Time:{td_str:<10} | [C]Cat:{self.category_filter:<10} | [R]Range:{r_str:<10} | [L]Limits")
-        print("=========================================================================")
+        print("=====================================================================================")
+        print(f"[T]Time:{td_str:<12} | [C]Cat:{self.category_filter:<14} | [R]Amount Range:{r_str:<10} | [L]Limits")
+        print("=====================================================================================")
         
         exp_str = f"{C_EXP}Total Exp: ${t_exp:,.2f}{C_RESET}"
         inc_str = f"{C_INC}Total Inc: ${t_inc:,.2f}{C_RESET}"
-        print(f"{exp_str:<35} | {inc_str}")
-        print("-" * 73)
+        print(f"{exp_str:<45} | {inc_str}")
+        print("-" * 85)
         
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
+        scale_str, target_days = Statistic.determine_scale(exp, self.pred_scale)
+        pred_prior = self.get_active_prior(scale_str)
+        
+        active_limit_for_pred = limit_val
+        
+        # 1. TWO-LINE LIMIT BAR RENDERING
         if limit_val <= 1e-9:
-            if self.scale == "All" and self.category_filter == "All":
-                print(f"Limit: {C_BAR}[ N/A in 'All' View ]{C_RESET} (Switch Time/Cat to see specific limits)")
+            if self.auto_suggest:
+                suggested_raw = Statistic.predict_budget(exp, target_days, 0.0)
+                
+                if suggested_raw <= 1e-9:
+                    print(f"Limit: {C_MAG}[ Not Set ]{C_RESET} (Log expenses to unlock Auto-Suggested limits!)")
+                else:
+                    sug_limit = round_to_3sf(suggested_raw)
+                    active_limit_for_pred = sug_limit
+                    sug_ratio = t_exp / sug_limit if sug_limit > 0 else 0
+                    sug_rem = max(0.0, sug_limit - t_exp)
+                    bar_len = min(20, int(sug_ratio * 20))
+                    
+                    if sug_ratio >= 1.0: color = C_EXP
+                    elif sug_ratio >= 0.75: color = C_ANO
+                    else: color = C_BAR
+                        
+                    bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
+                    
+                    if self.scale == "All" and self.category_filter == "All":
+                        print(f"Limit: {C_MAG}[ Auto-Suggested {scale_str} ]{C_RESET}")
+                    else:
+                        print(f"Limit: {C_MAG}[ Auto-Suggested ]{C_RESET}")
+                        
+                    print(f"{color}{bar_str}{C_RESET} {sug_ratio*100:.0f}%  (${t_exp:,.2f} / ${sug_limit:,.0f})  Rem: ${sug_rem:,.2f}")
             else:
-                print(f"Limit ({limit_name}): {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
+                if self.scale == "All" and self.category_filter == "All":
+                    print(f"Limit: {C_BAR}[ N/A in 'All' View ]{C_RESET} (Switch Time/Cat to see specific limits)")
+                else:
+                    print(f"Limit: {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
         else:
             bar_len = min(20, int(ratio * 20))
             color = C_EXP if is_exc else C_BAR
-            bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}] {ratio*100:.0f}%"
-            print(f"Limit ({limit_name}): {color}{bar_str}{C_RESET} (${t_exp:,.2f}/${limit_val:,.2f}) Remaining: ${rem:,.2f}")
-        print("-" * 73)
+            bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
+            
+            print(f"Limit ({limit_name}):")
+            print(f"{color}{bar_str}{C_RESET} {ratio*100:.0f}%  (${t_exp:,.2f} / ${limit_val:,.2f})  Rem: ${rem:,.2f}")
+
+        print("=====================================================================================")
         
-        print("Press [Y] Details | [I] Input Data | [Q] Exit System")
+        # 2. PREDICTED BUDGET RENDERING
+        pred_val = Statistic.predict_budget(exp, target_days, pred_prior)
+        if pred_val > 1e-9:
+            print(f"Predicted {scale_str} Budget: {C_INC}${round(pred_val):,.0f}{C_RESET}")
+        else:
+            print(f"Predicted {scale_str} Budget: {C_INC}[ Awaiting more data ]{C_RESET}")
+
+        print("-" * 85)
+        
+        print(f"[Y] Details | [I] Input | [P] Prediction: {self.pred_scale} | [Q] Quit")
 
     def show_details(self):
         sort_mode = "original"
@@ -133,29 +199,28 @@ class FinanceSystem:
             elif sort_mode == "alphabet":
                 exp.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
 
-            m_list = [r["money"] for r in exp]
-            mean_v = statistics.mean(m_list)
-            std_v = statistics.stdev(m_list) if len(m_list) > 1 else 0
+            m_list = [r["money"] for r in exp if r["money"] > 0]
+            log_m_list = [math.log(m) for m in m_list]
+            
+            log_mean_v = statistics.mean(log_m_list) if log_m_list else 0.0
+            log_std_v = statistics.stdev(log_m_list) if len(log_m_list) > 1 else 0.0
             max_v = max(m_list) if m_list else 0
 
-            # --- DYNAMIC WIDTH CALCULATION ---
-            # Description width
             max_desc_len = max([get_visual_len(r.get("description", "")) for r in exp]) if exp else 0
-            desc_width = max(15, max_desc_len + 2) # At least 15 wide, plus 2 spaces padding
+            desc_width = max(15, max_desc_len + 2) 
             
-            # Category width
             max_cat_len = max([get_visual_len(r.get("category", "")) for r in exp]) if exp else 0
-            cat_width = max(14, max_cat_len + 2) # At least 14 wide, plus 2 spaces padding
+            cat_width = max(14, max_cat_len + 2) 
             
-            # Calculate total line width based on dynamic columns
-            total_line_width = 5 + 12 + cat_width + 10 + desc_width + 10 + 20 + 14 
+            # Precisely calculated width for perfect border alignment
+            total_line_width = 61 + cat_width + desc_width
             
             print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
             print("-" * total_line_width)
             
             warnings = []
 
-            for i, r in enumerate(exp):
+            for i, r in enumerate(exp, start=1):
                 date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
                 
                 try:
@@ -163,7 +228,7 @@ class FinanceSystem:
                 except ValueError as e:
                     warnings.append(f"{C_EXP}ValueError: *[Idx {i}]*, {str(e)}{C_RESET}")
 
-                is_ano = Statistic.is_anomaly(r["money"], mean_v, std_v, r.get("ignore_anomaly", False))
+                is_ano = Statistic.is_anomaly(r["money"], log_mean_v, log_std_v, r.get("ignore_anomaly", False))
                 
                 if r.get("ignore_anomaly", False):
                     alarm = f"{C_INC}Ignored{C_RESET}"
@@ -171,7 +236,6 @@ class FinanceSystem:
                     alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
                     
                 bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
-                
                 desc = r.get("description", "")
                 
                 print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
@@ -181,9 +245,13 @@ class FinanceSystem:
                 for w in warnings:
                     print(w)
 
+            scale_str, target_days = Statistic.determine_scale(exp, self.pred_scale)
+            pred_prior = self.get_active_prior(scale_str)
+            
             pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
-            pred = Statistic.predict_budget(pred_recs)
-            print(f"\n{C_INC}Predicted 30-Day Budget for '{self.category_filter}': ${pred:,.2f}{C_RESET}")
+            pred = Statistic.predict_budget(pred_recs, target_days, pred_prior)
+            
+            print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
             
             print("\n--- Details Options ---")
             print("[S]ort Table | [E]dit Record (Modify/Alarm) | [Q]uit to Dashboard")
@@ -205,8 +273,8 @@ class FinanceSystem:
                     sort_mode = "original"
             elif cmd == 'E':
                 idx_str = input("\nEnter Index (Idx) number to edit: ").strip()
-                if idx_str.isdigit() and 0 <= int(idx_str) < len(exp):
-                    target_r = exp[int(idx_str)]
+                if idx_str.isdigit() and 1 <= int(idx_str) <= len(exp):
+                    target_r = exp[int(idx_str) - 1]
                     print(f"\nEditing Idx {idx_str}: {target_r['year']}-{target_r['month']:02d}-{target_r['day']:02d} | {target_r['category']} | ${target_r['money']}")
                     print("What would you like to edit?")
                     print("[D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [A]larm Toggle | [Q]Cancel")
@@ -290,7 +358,7 @@ class FinanceSystem:
             print("Invalid selection.")
 
     def _handle_range_filter(self):
-        print("\n--- Set Money Range ---")
+        print("\n--- Set Amount Range ---")
         try:
             l_str = input("Lower bound (default 0): ").strip()
             lower = float(l_str) if l_str else 0.0
@@ -301,24 +369,83 @@ class FinanceSystem:
             print("Error: Invalid numbers.")
 
     def _handle_limit_menu(self):
-        print("\n--- Limit Management ---")
-        print("[1] Set Time Limit")
-        print("[2] Set Category Limit")
-        print("[3] Remove Limit (Set to 0)")
-        choice = input("Choice (1/2/3): ").strip()
-        
-        try:
-            if choice == '1':
-                print("Scale options: [d]ay, [w]eek, [m]onth, [y]ear")
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print("=====================================================================================")
+            print("                             LIMIT MANAGEMENT DASHBOARD                              ")
+            print("=====================================================================================")
+            
+            t_exp = sum(r["money"] for r in self.records if not r.get("is_income", False))
+            t_inc = sum(r["money"] for r in self.records if r.get("is_income", False))
+            print(f" {C_EXP}Lifetime Exp: ${t_exp:,.2f}{C_RESET} | {C_INC}Lifetime Inc: ${t_inc:,.2f}{C_RESET}")
+            print("-" * 85)
+            
+            print(f" >>> {C_BAR}ACTIVE TIME LIMITS{C_RESET}")
+            active_time = False
+            for k, v in self.lm.time_limits.items():
+                if v > 1e-9:
+                    scale_name = {"d":"Daily", "w":"Weekly", "m":"Monthly", "y":"Yearly"}.get(k, k)
+                    print(f"     - {scale_name}: ${v:,.2f}")
+                    active_time = True
+                    
+            if not active_time: 
+                if self.auto_suggest:
+                    exp_all = [r for r in self.records if not r.get("is_income", False)]
+                    scale_str, target_days = Statistic.determine_scale(exp_all, self.pred_scale)
+                    sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days, 0.0))
+                    
+                    if sug_time > 0:
+                        print(f"     (None set) {C_MAG}>> Auto-Suggested {scale_str}: ${sug_time:,.0f}{C_RESET}")
+                    else:
+                        print(f"     (None set) {C_MAG}>> Log data to get a personalized suggestion!{C_RESET}")
+                else:
+                    print("     (None set)")
+            
+            print(f"\n >>> {C_BAR}ACTIVE CATEGORY LIMITS{C_RESET}")
+            active_cat = False
+            for k, v in self.lm.category_limits.items():
+                if v > 1e-9:
+                    print(f"     - {k}: ${v:,.2f}")
+                    active_cat = True
+            if not active_cat: print("     (None set)")
+            print("-" * 85)
+            
+            # Clean 3x3 Grid Layout for optimal visual balance
+            toggle_state = "ON " if self.auto_suggest else "OFF"
+            print(f"{'[T] Time Limit':<27} | {'[C] Category Limit':<27} | [R] Remove Limit")
+            print(f"{f'[1] Toggle Auto ({toggle_state})':<27} | {f'[P] Prediction: {self.pred_scale}':<27} | [Y] View Details")
+            print(f"{'[Q] Return to Main Menu':<27} | {'':<27} | ")
+            
+            cmd = get_char()
+            if cmd == 'Q':
+                break
+            elif cmd == 'Y':
+                self.show_details()
+            elif cmd == 'P':
+                scales = ["Auto", "Monthly", "Yearly", "Weekly"]
+                idx = scales.index(self.pred_scale)
+                self.pred_scale = scales[(idx + 1) % len(scales)]
+            elif cmd == '1':
+                self.auto_suggest = not self.auto_suggest
+            elif cmd == 'T':
+                print("\nScale options: [d]ay, [w]eek, [m]onth, [y]ear")
                 scale = input("Enter scale (d/w/m/y): ").strip().lower()
                 if scale in ['d', 'w', 'm', 'y']:
-                    amt = float(input("Enter limit amount: "))
-                    self.lm.set_limit("time", scale, amt)
-            elif choice == '2':
+                    try:
+                        amt = float(input("Enter limit amount: "))
+                        self.lm.set_limit("time", scale, amt)
+                    except ValueError:
+                        print("Error: Invalid amount."); get_char()
+            elif cmd == 'C':
+                print("\n")
                 cat = input("Enter Category Name (e.g. Food): ").strip()
-                amt = float(input("Enter limit amount: "))
-                self.lm.set_limit("cat", cat, amt)
-            elif choice == '3':
+                try:
+                    amt = float(input("Enter limit amount: "))
+                    self.lm.set_limit("cat", cat, amt)
+                except ValueError:
+                    print("Error: Invalid amount."); get_char()
+            elif cmd == 'R':
+                print("\n")
                 t_c = input("Remove [T]ime or [C]ategory limit? (T/C): ").strip().upper()
                 if t_c == 'T':
                     scale = input("Scale [d/w/m/y]: ").strip().lower()
@@ -326,8 +453,6 @@ class FinanceSystem:
                 elif t_c == 'C':
                     cat = input("Category Name: ").strip()
                     self.lm.set_limit("cat", cat, 0.0)
-        except ValueError:
-            print("Error: Invalid amount.")
 
     def run(self):
         try:
@@ -337,6 +462,10 @@ class FinanceSystem:
                 
                 if cmd == 'Q': 
                     break
+                elif cmd == 'P':
+                    scales = ["Auto", "Monthly", "Yearly", "Weekly"]
+                    idx = scales.index(self.pred_scale)
+                    self.pred_scale = scales[(idx + 1) % len(scales)]
                 elif cmd == 'T': 
                     self._handle_time_filter()
                 elif cmd == 'C':
@@ -350,20 +479,23 @@ class FinanceSystem:
                 elif cmd == 'I':
                     print("\n")
                     while True:
-                        sub = input("[F]ile or [T]erminal? (F/T): ").strip().upper()
-                        if sub in ['F', 'T']:
+                        sub = input("[F]ile, [T]erminal, or [Q]Cancel? (F/T/Q): ").strip().upper()
+                        if sub in ['F', 'T', 'Q']:
                             break
-                        print("Error: Please enter 'F' or 'T'.")
+                        print("Error: Please enter 'F', 'T', or 'Q'.")
                     
-                    if sub == 'F':
+                    if sub == 'Q':
+                        continue
+                    elif sub == 'F':
                         path = input("Enter file path: ").strip()
                         if path:
                             self.records.extend(Input.read_input(path, "txt"))
-                    else:
+                            self.save()
+                    elif sub == 'T':
                         rec = Input.read_terminal()
                         if rec: 
                             self.records.append(rec)
-                    self.save()
+                            self.save()
         except KeyboardInterrupt:
             print("\n[System] Interrupted by user.")
         finally:

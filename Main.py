@@ -56,7 +56,6 @@ class FinanceSystem:
         self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
         self.auto_suggest = True # UI Toggle for Auto-Suggestions
-        self.pred_scale = "Auto" # Options: Auto, Monthly, Yearly, Weekly
         
     def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
@@ -81,16 +80,6 @@ class FinanceSystem:
                 
             filtered.append(r)
         return filtered
-
-    def get_active_prior(self, scale_str):
-        """Fetches the correct limit prior specifically matched to the prediction scale"""
-        if self.category_filter != "All":
-            return self.lm.category_limits.get(self.category_filter, 0.0)
-        else:
-            if scale_str == "MONTHLY": return self.lm.time_limits.get("m", 0.0)
-            elif scale_str == "YEARLY": return self.lm.time_limits.get("y", 0.0)
-            elif scale_str == "WEEKLY": return self.lm.time_limits.get("w", 0.0)
-            return 0.0
 
     def draw_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -121,21 +110,19 @@ class FinanceSystem:
         print("Real-time Limit Progress:")
         is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
         
-        scale_str, target_days = Statistic.determine_scale(exp, self.pred_scale)
-        pred_prior = self.get_active_prior(scale_str)
-        
-        active_limit_for_pred = limit_val
+        scale_str, target_days = Statistic.determine_scale(exp, self.scale)
         
         # 1. TWO-LINE LIMIT BAR RENDERING
-        if limit_val <= 1e-9:
+        if self.scale == "All":
+            print(f"Limit: {C_BAR}[ N/A in 'All' Time Scale ]{C_RESET} (Switch Time filter to see specific limits)")
+        elif limit_val <= 1e-9:
             if self.auto_suggest:
-                suggested_raw = Statistic.predict_budget(exp, target_days, 0.0)
+                suggested_raw = Statistic.predict_budget(exp, target_days)
                 
                 if suggested_raw <= 1e-9:
                     print(f"Limit: {C_MAG}[ Not Set ]{C_RESET} (Log expenses to unlock Auto-Suggested limits!)")
                 else:
                     sug_limit = round_to_3sf(suggested_raw)
-                    active_limit_for_pred = sug_limit
                     sug_ratio = t_exp / sug_limit if sug_limit > 0 else 0
                     sug_rem = max(0.0, sug_limit - t_exp)
                     bar_len = min(20, int(sug_ratio * 20))
@@ -146,17 +133,10 @@ class FinanceSystem:
                         
                     bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
                     
-                    if self.scale == "All" and self.category_filter == "All":
-                        print(f"Limit: {C_MAG}[ Auto-Suggested {scale_str} ]{C_RESET}")
-                    else:
-                        print(f"Limit: {C_MAG}[ Auto-Suggested ]{C_RESET}")
-                        
+                    print(f"Limit: {C_MAG}[ Auto-Suggested ]{C_RESET}")
                     print(f"{color}{bar_str}{C_RESET} {sug_ratio*100:.0f}%  (${t_exp:,.2f} / ${sug_limit:,.0f})  Rem: ${sug_rem:,.2f}")
             else:
-                if self.scale == "All" and self.category_filter == "All":
-                    print(f"Limit: {C_BAR}[ N/A in 'All' View ]{C_RESET} (Switch Time/Cat to see specific limits)")
-                else:
-                    print(f"Limit: {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
+                print(f"Limit: {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
         else:
             bar_len = min(20, int(ratio * 20))
             color = C_EXP if is_exc else C_BAR
@@ -168,15 +148,14 @@ class FinanceSystem:
         print("=====================================================================================")
         
         # 2. PREDICTED BUDGET RENDERING
-        pred_val = Statistic.predict_budget(exp, target_days, pred_prior)
+        pred_val = Statistic.predict_budget(exp, target_days)
         if pred_val > 1e-9:
             print(f"Predicted {scale_str} Budget: {C_INC}${round(pred_val):,.0f}{C_RESET}")
         else:
             print(f"Predicted {scale_str} Budget: {C_INC}[ Awaiting more data ]{C_RESET}")
 
         print("-" * 85)
-        
-        print(f"[Y] Details | [I] Input | [P] Prediction: {self.pred_scale} | [Q] Quit")
+        print("[Y] Details | [I] Input | [Q] Quit")
 
     def show_details(self):
         sort_mode = "original"
@@ -212,7 +191,6 @@ class FinanceSystem:
             max_cat_len = max([get_visual_len(r.get("category", "")) for r in exp]) if exp else 0
             cat_width = max(14, max_cat_len + 2) 
             
-            # Precisely calculated width for perfect border alignment
             total_line_width = 61 + cat_width + desc_width
             
             print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
@@ -245,11 +223,9 @@ class FinanceSystem:
                 for w in warnings:
                     print(w)
 
-            scale_str, target_days = Statistic.determine_scale(exp, self.pred_scale)
-            pred_prior = self.get_active_prior(scale_str)
-            
+            scale_str, target_days = Statistic.determine_scale(exp, self.scale)
             pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
-            pred = Statistic.predict_budget(pred_recs, target_days, pred_prior)
+            pred = Statistic.predict_budget(pred_recs, target_days)
             
             print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
             
@@ -391,8 +367,8 @@ class FinanceSystem:
             if not active_time: 
                 if self.auto_suggest:
                     exp_all = [r for r in self.records if not r.get("is_income", False)]
-                    scale_str, target_days = Statistic.determine_scale(exp_all, self.pred_scale)
-                    sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days, 0.0))
+                    scale_str, target_days = Statistic.determine_scale(exp_all, self.scale)
+                    sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days))
                     
                     if sug_time > 0:
                         print(f"     (None set) {C_MAG}>> Auto-Suggested {scale_str}: ${sug_time:,.0f}{C_RESET}")
@@ -410,10 +386,9 @@ class FinanceSystem:
             if not active_cat: print("     (None set)")
             print("-" * 85)
             
-            # Clean 3x3 Grid Layout for optimal visual balance
             toggle_state = "ON " if self.auto_suggest else "OFF"
             print(f"{'[T] Time Limit':<27} | {'[C] Category Limit':<27} | [R] Remove Limit")
-            print(f"{f'[1] Toggle Auto ({toggle_state})':<27} | {f'[P] Prediction: {self.pred_scale}':<27} | [Y] View Details")
+            print(f"{f'[1] Toggle Auto ({toggle_state})':<27} | {'[Y] View Details':<27} | ")
             print(f"{'[Q] Return to Main Menu':<27} | {'':<27} | ")
             
             cmd = get_char()
@@ -421,10 +396,6 @@ class FinanceSystem:
                 break
             elif cmd == 'Y':
                 self.show_details()
-            elif cmd == 'P':
-                scales = ["Auto", "Monthly", "Yearly", "Weekly"]
-                idx = scales.index(self.pred_scale)
-                self.pred_scale = scales[(idx + 1) % len(scales)]
             elif cmd == '1':
                 self.auto_suggest = not self.auto_suggest
             elif cmd == 'T':
@@ -462,10 +433,6 @@ class FinanceSystem:
                 
                 if cmd == 'Q': 
                     break
-                elif cmd == 'P':
-                    scales = ["Auto", "Monthly", "Yearly", "Weekly"]
-                    idx = scales.index(self.pred_scale)
-                    self.pred_scale = scales[(idx + 1) % len(scales)]
                 elif cmd == 'T': 
                     self._handle_time_filter()
                 elif cmd == 'C':

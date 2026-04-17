@@ -37,8 +37,13 @@ def generate_barchart(money, max_money):
         
     return bar
 
-def determine_scale(records, pred_scale_setting="Auto"):
-    """Intelligently guesses the best prediction scale based on data span."""
+def determine_scale(records, time_scale="All"):
+    """Dynamically syncs the prediction scale with the active UI Time filter."""
+    if time_scale == "Year": return "YEARLY", 365
+    elif time_scale == "Month": return "MONTHLY", 30
+    elif time_scale == "Day": return "DAILY", 1
+    
+    # Auto logic for "All" based on data span
     if not records:
         return "MONTHLY", 30
     
@@ -52,19 +57,12 @@ def determine_scale(records, pred_scale_setting="Auto"):
         
     days_span = max(1, days_span)
     
-    if pred_scale_setting == "Auto":
-        if days_span > 300:
-            return "YEARLY", 365
-        elif days_span < 7:
-            return "WEEKLY", 7
-        else:
-            return "MONTHLY", 30
-    elif pred_scale_setting == "Yearly": return "YEARLY", 365
-    elif pred_scale_setting == "Weekly": return "WEEKLY", 7
+    if days_span > 300: return "YEARLY", 365
+    elif days_span < 7: return "WEEKLY", 7
     else: return "MONTHLY", 30
 
-def predict_budget(records, target_days=30, limit_prior=0.0):
-    """Bayesian Prediction scaled to specific target days."""
+def predict_budget(records, target_days=30):
+    """Clean data Trend Forecasting integrating Momentum Factor."""
     if not records:
         return 0.0
 
@@ -73,18 +71,17 @@ def predict_budget(records, target_days=30, limit_prior=0.0):
         return 0.0
 
     money_list = [r["money"] for r in expenses if r["money"] > 0]
+    if not money_list:
+        return 0.0
+        
     log_money = [math.log(m) for m in money_list]
-    
-    if len(log_money) < 2:
-        log_mean = math.log(money_list[0]) if money_list else 0.0
-        log_std = 0.0
-    else:
-        log_mean = statistics.mean(log_money)
-        log_std = statistics.stdev(log_money)
+    log_mean = statistics.mean(log_money) if len(log_money) >= 1 else 0.0
+    log_std = statistics.stdev(log_money) if len(log_money) > 1 else 0.0
 
     fixed_costs = 0.0
     variable_records = []
 
+    # Clean data: Exclude anomalies
     for r in expenses:
         if r.get("ignore_anomaly", False):
             fixed_costs += r["money"]
@@ -92,27 +89,46 @@ def predict_budget(records, target_days=30, limit_prior=0.0):
             if not is_anomaly(r["money"], log_mean, log_std):
                 variable_records.append(r)
 
+    if not variable_records:
+        return fixed_costs
+
     try:
         sorted_var = sorted(variable_records, key=lambda x: (x["year"], x["month"], x["day"]))
         start = datetime(sorted_var[0]["year"], sorted_var[0]["month"], sorted_var[0]["day"])
         end = datetime(sorted_var[-1]["year"], sorted_var[-1]["month"], sorted_var[-1]["day"])
         days_span = (end - start).days + 1
     except (ValueError, IndexError):
-        days_span = 30 
+        days_span = target_days 
     
     days_span = max(1, days_span)
 
-    daily_burn = sum(r["money"] for r in variable_records) / days_span if variable_records else 0.0
-    
-    # Normalize fixed costs to a daily rate to safely scale up to Yearly or down to Weekly
+    # Momentum Factor Calculation
+    momentum = 1.0
+    if len(sorted_var) >= 2 and days_span > 1:
+        mid_point = days_span // 2
+        first_half_sum = 0.0
+        second_half_sum = 0.0
+        
+        for r in sorted_var:
+            r_date = datetime(r["year"], r["month"], r["day"])
+            if (r_date - start).days <= mid_point:
+                first_half_sum += r["money"]
+            else:
+                second_half_sum += r["money"]
+                
+        first_half_avg = first_half_sum / max(1, mid_point)
+        second_half_avg = second_half_sum / max(1, days_span - mid_point)
+        
+        if first_half_avg > EPSILON:
+            momentum = second_half_avg / first_half_avg
+
+    daily_burn = sum(r["money"] for r in variable_records) / days_span
     daily_fixed = fixed_costs / days_span 
     
-    evidence_prediction = (daily_burn + daily_fixed) * target_days
+    forecast = (daily_burn + daily_fixed) * target_days * momentum
 
-    if limit_prior > 1e-9:
-        evidence_weight = min(0.90, len(variable_records) / float(target_days)) 
-        prior_weight = 1.0 - evidence_weight
-        posterior_prediction = (limit_prior * prior_weight) + (evidence_prediction * evidence_weight)
-        return posterior_prediction
-    else:
-        return evidence_prediction
+    # Apply safety buffer if trending heavily upward
+    if momentum > 1.1:
+        forecast *= 1.10 
+        
+    return forecast

@@ -148,11 +148,14 @@ class FinanceSystem:
         print("=====================================================================================")
         
         # 2. PREDICTED BUDGET RENDERING
-        pred_val = Statistic.predict_budget(exp, target_days)
-        if pred_val > 1e-9:
-            print(f"Predicted {scale_str} Budget: {C_INC}${round(pred_val):,.0f}{C_RESET}")
+        if self.scale != "All":
+            pred_val = Statistic.predict_budget(exp, target_days)
+            if pred_val > 1e-9:
+                print(f"Predicted {scale_str} Budget: {C_INC}${round(pred_val):,.0f}{C_RESET}")
+            else:
+                print(f"Predicted {scale_str} Budget: {C_INC}[ Awaiting more data ]{C_RESET}")
         else:
-            print(f"Predicted {scale_str} Budget: {C_INC}[ Awaiting more data ]{C_RESET}")
+            print(f"Predicted Budget: {C_BAR}[ N/A in 'All' Time Scale ]{C_RESET}")
 
         print("-" * 85)
         print("[Y] Details | [I] Input | [Q] Quit")
@@ -216,18 +219,22 @@ class FinanceSystem:
                 bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
                 desc = r.get("description", "")
                 
-                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(f'{r['money']:.1f}', 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
+                # Fix: Extract money into variable first to avoid f-string syntax error in < Python 3.12
+                money_fmt = f"{r['money']:.1f}"
+                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(money_fmt, 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
             
             if warnings:
                 print(f"\n{C_EXP}--- Data format Warnings ---{C_RESET}")
                 for w in warnings:
                     print(w)
 
-            scale_str, target_days = Statistic.determine_scale(exp, self.scale)
-            pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
-            pred = Statistic.predict_budget(pred_recs, target_days)
-            
-            print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+            if self.scale != "All":
+                scale_str, target_days = Statistic.determine_scale(exp, self.scale)
+                pred_recs = [r for r in self.records if (self.category_filter == "All" or r["category"] == self.category_filter)]
+                pred = Statistic.predict_budget(pred_recs, target_days)
+                print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+            else:
+                print(f"\n{C_BAR}Predicted Budget: [ N/A in 'All' Time Scale ]{C_RESET}")
             
             print("\n--- Details Options ---")
             print("[S]ort Table | [E]dit Record (Modify/Alarm) | [Q]uit to Dashboard")
@@ -367,7 +374,10 @@ class FinanceSystem:
             if not active_time: 
                 if self.auto_suggest:
                     exp_all = [r for r in self.records if not r.get("is_income", False)]
-                    scale_str, target_days = Statistic.determine_scale(exp_all, self.scale)
+                    
+                    # Temporarily determine scale for suggestion even in "All" view here
+                    # so users have a reference when setting up new limits.
+                    scale_str, target_days = Statistic.determine_scale(exp_all, "All")
                     sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days))
                     
                     if sug_time > 0:

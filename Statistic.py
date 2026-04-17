@@ -43,7 +43,6 @@ def determine_scale(records, time_scale="All"):
     elif time_scale == "Month": return "MONTHLY", 30
     elif time_scale == "Day": return "DAILY", 1
     
-    # Auto logic for "All" based on data span
     if not records:
         return "MONTHLY", 30
     
@@ -62,7 +61,7 @@ def determine_scale(records, time_scale="All"):
     else: return "MONTHLY", 30
 
 def predict_budget(records, target_days=30):
-    """Clean data Trend Forecasting integrating Momentum Factor."""
+    """Clean data Trend Forecasting integrating a Bounded Momentum Factor."""
     if not records:
         return 0.0
 
@@ -81,7 +80,7 @@ def predict_budget(records, target_days=30):
     fixed_costs = 0.0
     variable_records = []
 
-    # Clean data: Exclude anomalies
+    # Clean data: Separate anomalies/ignored into Fixed Costs
     for r in expenses:
         if r.get("ignore_anomaly", False):
             fixed_costs += r["money"]
@@ -120,12 +119,18 @@ def predict_budget(records, target_days=30):
         second_half_avg = second_half_sum / max(1, days_span - mid_point)
         
         if first_half_avg > EPSILON:
-            momentum = second_half_avg / first_half_avg
+            raw_momentum = second_half_avg / first_half_avg
+            # Architect Fix 1: Bound momentum to prevent insane spikes or crashes
+            momentum = max(0.5, min(2.0, raw_momentum))
 
     daily_burn = sum(r["money"] for r in variable_records) / days_span
     daily_fixed = fixed_costs / days_span 
     
-    forecast = (daily_burn + daily_fixed) * target_days * momentum
+    # Architect Fix 2: Momentum ONLY applies to variable spending. Fixed costs remain immune.
+    variable_forecast = daily_burn * target_days * momentum
+    fixed_forecast = daily_fixed * target_days
+    
+    forecast = variable_forecast + fixed_forecast
 
     # Apply safety buffer if trending heavily upward
     if momentum > 1.1:

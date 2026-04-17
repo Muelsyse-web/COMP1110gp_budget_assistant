@@ -33,9 +33,16 @@ def round_to_3sf(num):
         return 0.0
 
 def get_char():
+    """Captures single keystrokes cross-platform, protected against special characters."""
     try:
         import msvcrt
-        return msvcrt.getch().decode('utf-8').upper()
+        key = msvcrt.getch()
+        # Windows special keys (Arrows, F-keys) send two bytes. Catch and consume them to prevent decode crashes.
+        if key in [b'\x00', b'\xe0']:
+            msvcrt.getch() 
+            return ""
+        # 'ignore' prevents crashes if an unmapped non-utf8 key is pressed
+        return key.decode('utf-8', errors='ignore').upper() 
     except ImportError:
         import tty, termios
         fd = sys.stdin.fileno()
@@ -46,7 +53,7 @@ def get_char():
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         return ch.upper()
-
+        
 class FinanceSystem:
     def __init__(self):
         self.records = Input.read_input("data.json", "json")

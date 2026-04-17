@@ -219,7 +219,6 @@ class FinanceSystem:
                 bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
                 desc = r.get("description", "")
                 
-                # Extract money safely to avoid Python 3.8 f-string syntax error
                 money_fmt = f"{r['money']:.1f}"
                 print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(money_fmt, 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
             
@@ -228,11 +227,14 @@ class FinanceSystem:
                 for w in warnings:
                     print(w)
 
-            # Sync Prediction scope with the Dashboard
+            # Architect Fix: Sync UI fallback state
             if self.scale != "All":
                 scale_str, target_days = Statistic.determine_scale(exp, self.scale)
                 pred = Statistic.predict_budget(exp, target_days)
-                print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+                if pred > 1e-9:
+                    print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+                else:
+                    print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': [ Awaiting more data ]{C_RESET}")
             else:
                 print(f"\n{C_BAR}Predicted Budget: [ N/A in 'All' Time Scale ]{C_RESET}")
             

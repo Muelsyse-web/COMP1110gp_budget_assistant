@@ -120,19 +120,19 @@ def predict_budget(records, target_days=30):
         
         if first_half_avg > EPSILON:
             raw_momentum = second_half_avg / first_half_avg
-            # Architect Fix 1: Bound momentum to prevent insane spikes or crashes
             momentum = max(0.5, min(2.0, raw_momentum))
+        elif second_half_avg > EPSILON:
+            # Architect Fix: "Zero-to-Hero" spending curve defaults to max momentum
+            momentum = 2.0
 
     daily_burn = sum(r["money"] for r in variable_records) / days_span
     daily_fixed = fixed_costs / days_span 
     
-    # Architect Fix 2: Momentum ONLY applies to variable spending. Fixed costs remain immune.
     variable_forecast = daily_burn * target_days * momentum
     fixed_forecast = daily_fixed * target_days
     
     forecast = variable_forecast + fixed_forecast
 
-    # Apply safety buffer if trending heavily upward
     if momentum > 1.1:
         forecast *= 1.10 
         

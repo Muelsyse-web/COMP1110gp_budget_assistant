@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from datetime import datetime
 
 # ANSI Colors for Error Handling
@@ -51,6 +52,11 @@ def read_input(file_path, mode="json"):
                             except ValueError:
                                 pass
                     line_num += 1
+    except json.JSONDecodeError as e:
+        # Architect Fix: Prevent DB Wipes on Corrupted JSON
+        print(f"\n{C_EXP}[CRITICAL SYSTEM HALT] {file_path} is corrupted: {e}{C_RESET}")
+        print(f"{C_EXP}To prevent permanent data loss, the system will not boot until the JSON syntax is fixed.{C_RESET}\n")
+        sys.exit(1)
     except Exception as e:
         print(f"File reading error: {e}")
     return records

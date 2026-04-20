@@ -1,106 +1,101 @@
 # COMP1110 Group Project: budget_assistant
 
-**Topic:** Topic A: Personal Budget
-**Tutorial Subclass:** [Insert Subclass, e.g., Group 1A]
+**Topic:** Topic A: Personal Budget  
+**Tutorial Subclass:** [Insert Subclass, e.g., Group 1A]  
 
 ## Group Members
-* [Student Name 1] - [Student ID]
+* Xu Mohan - 3036601604
 * [Student Name 2] - [Student ID]
 * [Student Name 3] - [Student ID]
 * [Student Name 4] - [Student ID]
 * [Student Name 5] - [Student ID]
+
 ---
 
-
-1. Project Overview
+## 1. Project Overview
 
 This project is an advanced Command Line Interface (CLI) based personal finance management system. It goes beyond basic tracking and display by integrating a powerful statistical engine. Key features include pixel-precision visual bar charts, Z-Score based anomaly spending alerts, and predictive budgeting using linear regression and momentum factors.
 
 The entire system utilizes ANSI color rendering and a "One-Letter Trigger" interaction model, eliminating the need for tedious command typing and providing an ultra-fast, seamless user experience.
 
-2. Core Technical Highlights
+## 2. File Structure and Purpose
 
-High-Precision Logarithmic Bar Charts (1/8 Block Resolution): Utilizes Unicode sub-blocks (from 1/8 to 8/8 width) to achieve high-resolution data visualization in the terminal. Combined with a logarithmic scaling algorithm, it perfectly resolves the visual issue where small expenses (e.g., $10) and large expenses (e.g., $1000) cannot be meaningfully displayed on the same chart.
+* **`Main.py`**: The core application entry point. It manages the main event loop, handles the "One-Letter Trigger" UI interactions, and renders the live dashboard.
+* **`Input.py`**: Manages all data ingestion. It safely reads batch data from `.txt` files and handles manual terminal inputs with strict format validation to prevent crashes.
+* **`Limit.py`**: The logic handler for budget caps. It stores, updates, and calculates the progress ratios for both time-based limits (e.g., daily, monthly) and category-based limits.
+* **`Statistic.py`**: The mathematical engine of the app. It calculates Z-scores for anomaly detection, generates the high-precision logarithmic bar charts, and computes the trend-based budget predictions.
+* **`data.json`**: The persistent local database where all transaction records are safely serialized and stored.
 
-Z-Score Intelligent Anomaly Warning: The system automatically calculates the mean and standard deviation of your spending based on current filters. Any expense that deviates from the mean by more than 2 standard deviations ($|Z| \ge 2.0$) is highlighted as a ⚠️ ANOMALY (impulse or irregular spending).
+## 3. Environment & Execution
 
-Clean-Data Predictive Budget: When forecasting the next month's budget, the system automatically excludes the aforementioned "anomalies" and calculates the "Daily Burn Rate" based on your regular spending habits. By integrating a "Momentum Factor" (comparing the first and second halves of your timeline), it provides a highly realistic 30-day budget prediction. It also automatically adds a 10% safety buffer if an upward spending trend is detected.
+* **Language:** Python 3.x (3.8+ recommended)
+* **Dependencies:** Pure Python standard libraries (`json`, `os`, `sys`, `math`, `statistics`, `datetime`, `re`). No external third-party packages are required.
+* **Execution Environment:** Compatible with Windows, macOS, and Linux terminals.
+* **How to Run:** Open your terminal or command prompt in the project root directory and execute:
+    ```bash
+    python Main.py
+    ```
 
-3. Environment & Execution
+## 4. Interactive Operation Guide
 
-Environment: Python 3.x (3.8+ recommended)
+The system listens for keystrokes in real-time. You do not need to press `Enter` to trigger a command. The main control bar looks like this:
+`[T]Time:All | [C]Cat:All | [R]Range:All | [L]Limits | [I]nput | [Y]Details | [Q]uit`
 
-Dependencies: Pure Python standard libraries (json, os, sys, math, statistics, datetime, re). No external packages are required.
+### 📊 Core Data Filters
+* **`[T]` Time Scale**: Cycles through the time scale: Day -> Week -> Month -> Year -> All.
+* **`[C]` Category**: Dynamically lists all existing spending categories. Enter the corresponding number to filter.
+* **`[R]` Money Range**: Prompts you to enter a minimum and maximum amount.
 
-How to Run: Open your terminal or command prompt in the project root directory and execute:
+### 🛡️ Budgets & Limits
+* **`[L]` Limits Management**: Set spending caps for specific time frames (e.g., $1000/month) or specific categories. The dashboard displays a real-time colored progress bar that turns red if you overspend.
 
-python Main.py
+### 📝 Data Input
+* **`[I]` Input Data**: Choose between two input methods:
+    * **`[F]`ile Batch Import**: Reads space-separated text files. Format: `YYYY-MM-DD Category Money Description`
+    * **`[T]`erminal Manual Entry**: Step-by-step strict validation for manual logging.
 
+### 🔎 Details & Exit
+* **`[Y]` View Details**: Opens the detailed data panel showing a perfectly aligned table with Date, Category, Money, Z-Score Alarm Flags, and High-Resolution Bar Charts.
+* **`[Q]` Quit**: Safely exit the system. Auto-saves to `data.json`.
 
-4. Interactive Operation Guide (One-Letter Trigger)
+## 5. Sample Test Cases & Scenarios
 
-The system listens for keystrokes in real-time. You do not need to press Enter to trigger a command (compatible with both Windows and Unix).
+To demonstrate the system's capabilities, we have designed three realistic case studies. You can test these by importing the corresponding text files using the `[I]nput` -> `[F]ile` command. 
 
-The main control bar on the dashboard looks like this:
-[T]Time:All | [C]Cat:All | [R]Range:All | [L]Limits | [I]nput | [Y]Details | [Q]uit
+*Note: Ensure you create these sample `.txt` files in your directory to follow along.*
 
-📊 Core Data Filters
+### Scenario 1: Daily Food Budget Cap (HK$50)
+* **Goal:** Track small, frequent food purchases and alert the user if they exceed a daily budget of $50.
+* **Test Data (`test_food.txt`):**
+    ```text
+    2026-03-01 Food 30.5 Breakfast
+    2026-03-01 Food 25.0 Lunch
+    2026-03-02 Food 45.0 Dinner
+    ```
+* **How to test:** Import the file. Press `[L]` to set a daily time limit of `50`. Press `[T]` to filter by Day (`2026-03-01`). The dashboard will highlight that the limit is exceeded (111%).
 
-All filters can be stacked/combined. For example, you can view bills from "February 2026" AND in the "Food" category AND with an amount "between 100 and 500".
+### Scenario 2: Monthly Transport Tracking
+* **Goal:** Evaluate transport spending over a month to see if a monthly pass is worth buying.
+* **Test Data (`test_transport.txt`):**
+    ```text
+    2026-03-01 Transport 12.0 MTR_to_HKU
+    2026-03-02 Transport 12.0 MTR_to_HKU
+    2026-03-05 Transport 85.0 Taxi_Home
+    ```
+* **How to test:** Import the file. Press `[C]` to filter by `Transport`. Press `[Y]` to view details. The $85 Taxi trip will be automatically flagged as an `ANOMALY` by the Z-score engine. 
 
-[T] Time Scale
-Cycles through the time scale: Day -> Week -> Month -> Year -> All.
-When selecting a specific date/month, the system will prompt you to enter the target (e.g., 2026-02). The dashboard data and totals will update immediately.
+### Scenario 3: Subscription Creep Detection
+* **Goal:** Detect hidden or forgotten recurring expenses over a year.
+* **Test Data (`test_subs.txt`):**
+    ```text
+    2026-01-15 Subscription 78.0 Netflix
+    2026-02-15 Subscription 78.0 Netflix
+    2026-03-15 Subscription 118.0 Netflix_Premium_Upgrade
+    ```
+* **How to test:** Import the file. Press `[C]` to filter by `Subscription`. The system's predictive budgeting will automatically forecast next month's expected subscription cost, factoring in the recent upward trend.
 
-[C] Category
-Dynamically lists all existing spending categories in your database with assigned numbers. Enter the number to view only that category.
+## 6. Data Persistence
 
-[R] Money Range
-Prompts you to enter a minimum (Lower bound) and maximum (Upper bound) amount. Leave empty for no limit.
-
-🛡️ Budgets & Limits
-
-[L] Limits Management
-Set spending caps for specific time frames (e.g., monthly) or specific categories (e.g., Food).
-
-[1] Set Time Limit: Set an absolute time-based limit (e.g., $1000 per month).
-
-[2] Set Category Limit: Set a limit for a specific category.
-
-[3] Remove Limit: Set a limit to 0 to remove it.
-
-UI Integration: Once set, the dashboard displays a real-time colored progress bar. If you exceed the limit, the bar turns Red.
-
-📝 Data Input
-
-[I] Input Data
-Choose between two input methods:
-
-[F]ile Batch Import:
-When prompted with Enter file path:, type your txt file name (e.g., import_test.txt).
-Format requirement (space-separated, one record per line):
-YYYY-MM-DD Category Money Description
-(Note: The system has high fault tolerance. If the file contains invalid dates like 2026-02-30 or letters in the money field, it will silently skip the invalid line to ensure the program never crashes.)
-
-[T]erminal Manual Entry:
-The system will ask if it is Income (I) or Expenditure (E), then prompt you to enter the data in the YYYY-MM-DD Category Money Description format. This mode includes strict validation and will block/reject any typos or invalid data instantly.
-
-🔎 Details & Exit
-
-[Y] View Details
-Opens the detailed data panel. You will see a perfectly aligned table of your filtered records, including Date, Category, Money, Z-Score Alarm Flags, and High-Resolution Bar Charts.
-At the bottom of the table, the system displays the predicted 30-day budget based on your current filters.
-
-[Q] Quit
-Safely exit the system. The program will automatically serialize and save all recent data to the data.json file.
-(Note: Even if you force-quit the program using Ctrl+C, the underlying try...finally mechanism guarantees that your data is securely saved before termination.)
-
-5. Data Persistence (data.json)
-
-The system uses data.json in the root directory as the core database.
-
-First Run: If the file does not exist, the system will start with an empty database.
-
-Auto Load: Every time Main.py starts, it automatically loads history from this file.
-
-Auto Save: Whether you exit manually, import a file, or encounter an unexpected interrupt, the program automatically overwrites and saves the latest data to data.json. No manual saving is required.
+The system uses `data.json` in the root directory as the core database.
+* **First Run:** If the file does not exist, the system starts with an empty database.
+* **Auto Load & Save:** Every time `Main.py` starts, it loads the history. Whether you exit manually or encounter an unexpected interrupt, the program securely overwrites and saves the latest data to `data.json`.

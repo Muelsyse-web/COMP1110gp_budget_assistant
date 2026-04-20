@@ -6,9 +6,9 @@
 ## Group Members
 * Xu Mohan - 3036601604
 * Ma Xiaoyu - 3036481664
-* [Student Name 3] - [Student ID]
-* [Student Name 4] - [Student ID]
-* [Student Name 5] - [Student ID]
+* Wu Chung Hin Hugo - 3036582602
+* Li Xingwei - 3036452821
+* Zhang Jiaqi - 3036588979
 
 ---
 

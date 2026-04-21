@@ -10,8 +10,12 @@ import Input
 import Statistic
 
 # ANSI Colors
-C_INC, C_EXP, C_ANO, C_BAR, C_RESET = '\033[92m', '\033[91m', '\033[93m', '\033[96m', '\033[0m'
-C_MAG = '\033[95m' # Magenta for Auto-Suggested Text
+C_INC = '\033[92m'  # Green (Income)
+C_EXP = '\033[91m'  # Red (Expenses)
+C_ANO = '\033[93m'  # Yellow (Anomalies)
+C_BAR = '\033[96m'  # Cyan (Bar Charts)
+C_PUR = '\033[95m'  # Purple (Input Errors)
+C_RESET = '\033[0m'
 
 def get_visual_len(text):
     """Calculates the visual width of a string in the terminal, counting CJK characters as 2 spaces."""
@@ -37,11 +41,9 @@ def get_char():
     try:
         import msvcrt
         key = msvcrt.getch()
-        # Windows special keys (Arrows, F-keys) send two bytes. Catch and consume them to prevent decode crashes.
         if key in [b'\x00', b'\xe0']:
             msvcrt.getch() 
             return ""
-        # 'ignore' prevents crashes if an unmapped non-utf8 key is pressed
         return key.decode('utf-8', errors='ignore').upper() 
     except ImportError:
         import tty, termios
@@ -62,12 +64,11 @@ class FinanceSystem:
         self.target_date = None
         self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
-        self.auto_suggest = True # UI Toggle for Auto-Suggestions
+        self.auto_suggest = True 
         
     def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(self.records, f, indent=4)
-        print("\n[System] Data saved successfully.")
 
     def get_filtered_records(self):
         filtered = []
@@ -119,7 +120,6 @@ class FinanceSystem:
         
         scale_str, target_days = Statistic.determine_scale(exp, self.scale)
         
-        # 1. TWO-LINE LIMIT BAR RENDERING
         if self.scale == "All":
             print(f"Limit: {C_BAR}[ N/A in 'All' Time Scale ]{C_RESET} (Switch Time filter to see specific limits)")
         elif limit_val <= 1e-9:
@@ -127,7 +127,7 @@ class FinanceSystem:
                 suggested_raw = Statistic.predict_budget(exp, target_days)
                 
                 if suggested_raw <= 1e-9:
-                    print(f"Limit: {C_MAG}[ Not Set ]{C_RESET} (Log expenses to unlock Auto-Suggested limits!)")
+                    print(f"Limit: {C_PUR}[ Not Set ]{C_RESET} (Log expenses to unlock Auto-Suggested limits!)")
                 else:
                     sug_limit = round_to_3sf(suggested_raw)
                     sug_ratio = t_exp / sug_limit if sug_limit > 0 else 0
@@ -140,7 +140,7 @@ class FinanceSystem:
                         
                     bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
                     
-                    print(f"Limit: {C_MAG}[ Auto-Suggested ]{C_RESET}")
+                    print(f"Limit: {C_PUR}[ Auto-Suggested ]{C_RESET}")
                     print(f"{color}{bar_str}{C_RESET} {sug_ratio*100:.0f}%  (${t_exp:,.2f} / ${sug_limit:,.0f})  Rem: ${sug_rem:,.2f}")
             else:
                 print(f"Limit: {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
@@ -154,7 +154,6 @@ class FinanceSystem:
 
         print("=====================================================================================")
         
-        # 2. PREDICTED BUDGET RENDERING
         if self.scale != "All":
             pred_val = Statistic.predict_budget(exp, target_days)
             if pred_val > 1e-9:
@@ -175,78 +174,96 @@ class FinanceSystem:
             os.system('cls' if os.name == 'nt' else 'clear')
             filtered_recs = self.get_filtered_records()
             exp = [r for r in filtered_recs if not r.get("is_income", False)]
+            inc = [r for r in filtered_recs if r.get("is_income", False)]
             
-            if not exp:
-                print("\nNo expenditures found for current filters.")
+            if not exp and not inc:
+                print("\nNo records found for current filters.")
                 get_char()
                 return
 
             if sort_mode == "time":
                 exp.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
+                inc.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
             elif sort_mode == "money":
                 exp.sort(key=lambda x: x["money"], reverse=sort_desc)
+                inc.sort(key=lambda x: x["money"], reverse=sort_desc)
             elif sort_mode == "alphabet":
                 exp.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
+                inc.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
 
-            m_list = [r["money"] for r in exp if r["money"] > 0]
-            log_m_list = [math.log(m) for m in m_list]
-            
-            log_mean_v = statistics.mean(log_m_list) if log_m_list else 0.0
-            log_std_v = statistics.stdev(log_m_list) if len(log_m_list) > 1 else 0.0
-            max_v = max(m_list) if m_list else 0
-
-            max_desc_len = max([get_visual_len(r.get("description", "")) for r in exp]) if exp else 0
+            all_recs = inc + exp
+            max_desc_len = max([get_visual_len(r.get("description", "")) for r in all_recs]) if all_recs else 0
             desc_width = max(15, max_desc_len + 2) 
             
-            max_cat_len = max([get_visual_len(r.get("category", "")) for r in exp]) if exp else 0
+            max_cat_len = max([get_visual_len(r.get("category", "")) for r in all_recs]) if all_recs else 0
             cat_width = max(14, max_cat_len + 2) 
             
             total_line_width = 61 + cat_width + desc_width
             
-            print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text("Alarm", 10) + "| Bar Chart")
-            print("-" * total_line_width)
-            
-            warnings = []
-
-            for i, r in enumerate(exp, start=1):
-                date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+            def print_table(records, title, color, is_income=False):
+                print(f"\n>>> {color}{title}{C_RESET}")
+                if not records:
+                    print(f" (No records found)")
+                    return []
                 
-                try:
-                    datetime(r['year'], r['month'], r['day'])
-                except ValueError as e:
-                    warnings.append(f"{C_EXP}ValueError: *[Idx {i}]*, {str(e)}{C_RESET}")
-
-                is_ano = Statistic.is_anomaly(r["money"], log_mean_v, log_std_v, r.get("ignore_anomaly", False))
+                m_list = [r["money"] for r in records if r["money"] > 0]
+                log_m_list = [math.log(m) for m in m_list]
                 
-                if r.get("ignore_anomaly", False):
-                    alarm = f"{C_INC}Ignored{C_RESET}"
-                else:
-                    alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
+                log_mean_v = statistics.mean(log_m_list) if log_m_list else 0.0
+                log_std_v = statistics.stdev(log_m_list) if len(log_m_list) > 1 else 0.0
+                max_v = max(m_list) if m_list else 0
+                
+                # Replace Alarm header with blank padding for Income table
+                alarm_header = "" if is_income else "Alarm"
+                print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text(alarm_header, 10) + "| Bar Chart")
+                print("-" * total_line_width)
+                
+                warnings_list = []
+                for i, r in enumerate(records, start=1):
+                    date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                    try:
+                        datetime(r['year'], r['month'], r['day'])
+                    except ValueError as e:
+                        warnings_list.append(f"{C_ANO}ValueError: *[{title} Idx {i}]*, {str(e)}{C_RESET}")
+
+                    # Disable Alarm checks and labels for Income
+                    if is_income:
+                        alarm = ""
+                    else:
+                        is_ano = Statistic.is_anomaly(r["money"], log_mean_v, log_std_v, r.get("ignore_anomaly", False))
+                        if r.get("ignore_anomaly", False):
+                            alarm = f"{C_INC}Ignored{C_RESET}"
+                        else:
+                            alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
+                        
+                    bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
+                    desc = r.get("description", "")
                     
-                bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
-                desc = r.get("description", "")
-                
-                money_fmt = f"{r['money']:.1f}"
-                print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(money_fmt, 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
+                    money_fmt = f"{r['money']:.1f}"
+                    print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(money_fmt, 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
+                return warnings_list
+
+            warnings = []
+            warnings.extend(print_table(inc, "INCOME RECORDS", C_INC, is_income=True))
+            warnings.extend(print_table(exp, "EXPENSE RECORDS", C_EXP, is_income=False))
             
             if warnings:
-                print(f"\n{C_EXP}--- Data format Warnings ---{C_RESET}")
+                print(f"\n{C_ANO}--- Data format Warnings ---{C_RESET}")
                 for w in warnings:
                     print(w)
 
-            # Architect Fix: Sync UI fallback state
             if self.scale != "All":
                 scale_str, target_days = Statistic.determine_scale(exp, self.scale)
                 pred = Statistic.predict_budget(exp, target_days)
                 if pred > 1e-9:
-                    print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+                    print(f"\n{C_EXP}Predicted {scale_str} Expense Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
                 else:
-                    print(f"\n{C_INC}Predicted {scale_str} Budget for '{self.category_filter}': [ Awaiting more data ]{C_RESET}")
+                    print(f"\n{C_EXP}Predicted {scale_str} Expense Budget for '{self.category_filter}': [ Awaiting more data ]{C_RESET}")
             else:
                 print(f"\n{C_BAR}Predicted Budget: [ N/A in 'All' Time Scale ]{C_RESET}")
             
             print("\n--- Details Options ---")
-            print("[S]ort Table | [E]dit Record (Modify/Alarm) | [Q]uit to Dashboard")
+            print("[S]ort Tables | [E]dit Record | [Q]uit to Dashboard")
             cmd = get_char()
             
             if cmd == 'Q':
@@ -264,15 +281,45 @@ class FinanceSystem:
                 elif s_cmd == 'O':
                     sort_mode = "original"
             elif cmd == 'E':
-                idx_str = input("\nEnter Index (Idx) number to edit: ").strip()
-                if idx_str.isdigit() and 1 <= int(idx_str) <= len(exp):
-                    target_r = exp[int(idx_str) - 1]
-                    print(f"\nEditing Idx {idx_str}: {target_r['year']}-{target_r['month']:02d}-{target_r['day']:02d} | {target_r['category']} | ${target_r['money']}")
+                print("\nEdit [I]ncome or [E]xpense record? (I/E)")
+                ie_cmd = get_char()
+                
+                # Screen Clear to isolate the selected table
+                os.system('cls' if os.name == 'nt' else 'clear')
+                
+                if ie_cmd == 'I':
+                    target_list = inc
+                    t_name = "Income"
+                    print_table(inc, "INCOME RECORDS", C_INC, is_income=True)
+                elif ie_cmd == 'E':
+                    target_list = exp
+                    t_name = "Expense"
+                    print_table(exp, "EXPENSE RECORDS", C_EXP, is_income=False)
+                else:
+                    print("Invalid choice."); get_char(); continue
+                    
+                if not target_list:
+                    print(f"\nNo {t_name} records available to edit."); get_char(); continue
+
+                idx_str = input(f"\nEnter Index (Idx) number from the {t_name} table to edit: ").strip()
+                if idx_str.isdigit() and 1 <= int(idx_str) <= len(target_list):
+                    target_r = target_list[int(idx_str) - 1]
+                    print(f"\nEditing {t_name} Idx {idx_str}: {target_r['year']}-{target_r['month']:02d}-{target_r['day']:02d} | {target_r['category']} | ${target_r['money']}")
                     print("What would you like to edit?")
-                    print("[D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [A]larm Toggle | [Q]Cancel")
+                    
+                    if t_name == "Expense":
+                        print("[T]ype (Flip I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [A]larm Toggle | [X]Delete | [Q]Cancel")
+                    else:
+                        print("[T]ype (Flip I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [X]Delete | [Q]Cancel")
+                        
                     e_cmd = get_char()
                     
-                    if e_cmd == 'D':
+                    if e_cmd == 'T':
+                        target_r["is_income"] = not target_r["is_income"]
+                        self.save()
+                        new_type = "Income" if target_r["is_income"] else "Expense"
+                        print(f"\n{C_INC}Record successfully moved to the {new_type} table.{C_RESET}"); get_char()
+                    elif e_cmd == 'D':
                         new_date = input("Enter new date (YYYY-MM-DD): ").strip()
                         dp = Input.validate_date(new_date, "Edit Input")
                         if dp:
@@ -290,21 +337,26 @@ class FinanceSystem:
                                 target_r["money"] = new_money
                                 self.save()
                             else:
-                                print("Amount must be positive.")
-                                get_char()
+                                print("Amount must be positive."); get_char()
                         except ValueError:
-                            print("Invalid amount.")
-                            get_char()
+                            print("Invalid amount."); get_char()
                     elif e_cmd == 'I':
                         new_desc = input("Enter new Description: ").strip()
                         target_r["description"] = new_desc
                         self.save()
-                    elif e_cmd == 'A':
+                    elif e_cmd == 'A' and t_name == "Expense":
                         target_r["ignore_anomaly"] = not target_r.get("ignore_anomaly", False)
                         self.save()
+                    elif e_cmd == 'X':
+                        print(f"\n{C_EXP}Are you sure you want to delete this record? (Y/N){C_RESET}")
+                        conf = get_char()
+                        if conf == 'Y':
+                            self.records.remove(target_r)
+                            self.save()
+                            print(f"{C_INC}Record deleted successfully.{C_RESET}")
+                            get_char()
                 else:
-                    print("Invalid index.")
-                    get_char()
+                    print("Invalid index."); get_char()
 
     def _handle_time_filter(self):
         print("\n--- Set Time Scale ---")
@@ -331,8 +383,7 @@ class FinanceSystem:
                 self.scale = "Day"
                 self.target_date = {"year": dp[0], "month": dp[1], "day": dp[2]}
         else:
-            print("Invalid input.")
-            get_char()
+            print("Invalid input."); get_char()
 
     def _handle_category_filter(self):
         cats = list(set(r["category"] for r in self.records))
@@ -383,16 +434,13 @@ class FinanceSystem:
             if not active_time: 
                 if self.auto_suggest:
                     exp_all = [r for r in self.records if not r.get("is_income", False)]
-                    
-                    # Temporarily determine scale for suggestion even in "All" view here
-                    # so users have a reference when setting up new limits.
                     scale_str, target_days = Statistic.determine_scale(exp_all, "All")
                     sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days))
                     
                     if sug_time > 0:
-                        print(f"     (None set) {C_MAG}>> Auto-Suggested {scale_str}: ${sug_time:,.0f}{C_RESET}")
+                        print(f"     (None set) {C_PUR}>> Auto-Suggested {scale_str}: ${sug_time:,.0f}{C_RESET}")
                     else:
-                        print(f"     (None set) {C_MAG}>> Log data to get a personalized suggestion!{C_RESET}")
+                        print(f"     (None set) {C_PUR}>> Log data to get a personalized suggestion!{C_RESET}")
                 else:
                     print("     (None set)")
             
@@ -444,6 +492,147 @@ class FinanceSystem:
                     cat = input("Category Name: ").strip()
                     self.lm.set_limit("cat", cat, 0.0)
 
+    def _handle_input_menu(self):
+        staging_buffer = []
+        last_error = ""
+        
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print("=====================================================================================")
+            print("                             DATA INPUT STAGING AREA                              ")
+            print("=====================================================================================")
+            print(" Instructions:")
+            print(" - Manual Entry: Type your data directly using this exact format:")
+            print("                 [I/E] [YYYY-MM-DD] [CATEGORY] [MONEY] [DESCRIPTION]")
+            print("                 (e.g., E 2026-04-21 Food 45.50 Lunch)")
+            print(" - File Import:  Type 'F' followed by your filename (e.g., F test_food.txt)")
+            print(" - Edit Line:    Type 'E' to select and modify (or delete) a specific line.")
+            print(f" - Finish:       Type 'DONE' to save all entries to the database.")
+            print(f"                 ({C_INC}Income is shown in Green{C_RESET}, {C_EXP}Expenses in Red{C_RESET}).")
+            print(" - Cancel:       Type 'Q' to discard everything and return.")
+            print("-" * 85)
+            
+            print(f" {pad_text('Idx', 4)}| {pad_text('Type', 6)}| {pad_text('Date', 12)}| {pad_text('Category', 14)}| {pad_text('Money', 10)}| Description")
+            print("-" * 85)
+            
+            if not staging_buffer:
+                print(" (No data staged yet. Start typing your entries...)")
+            else:
+                for i, item in enumerate(staging_buffer, start=1):
+                    r = item["record"]
+                    t_str = "[Inc]" if r["type"] == 'I' else "[Exp]"
+                    date_str = r.get("raw_date", "")
+                    cat_str = r.get("category", "")
+                    money_str = r.get("raw_money", "")
+                    desc_str = r.get("description", "")
+                    
+                    line_str = f"{pad_text(t_str, 6)}| {pad_text(date_str, 12)}| {pad_text(cat_str, 14)}| {pad_text(money_str, 10)}| {desc_str}"
+                    
+                    color = C_INC if r["is_income"] else C_EXP
+                    print(f" {pad_text(str(i), 4)}| {color}{line_str}{C_RESET}")
+            
+            print("=====================================================================================")
+            
+            if last_error:
+                print(f" {C_PUR}>> Input Error: {last_error}{C_RESET}")
+                last_error = "" 
+                
+            if staging_buffer:
+                print(" >> Are these all the data you want to add? If yes, type 'DONE'.")
+                
+            user_input = input("> Your Input: ").strip()
+            
+            if user_input.upper() == 'Q':
+                break
+                
+            elif user_input.upper() == 'DONE':
+                if staging_buffer:
+                    for item in staging_buffer:
+                        self.records.append(item["record"])
+                    
+                    self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+                    self.save()
+                    print(f"\n[System] {C_INC}{len(staging_buffer)} valid entries were successfully appended!{C_RESET}")
+                    input("Press Enter to return to Dashboard...")
+                break
+                    
+            elif user_input.upper() == 'E':
+                idx_str = input("\n> Enter Idx number to edit: ").strip()
+                if idx_str.isdigit():
+                    idx = int(idx_str)
+                    if 1 <= idx <= len(staging_buffer):
+                        target_item = staging_buffer[idx-1]
+                        rec = target_item["record"]
+                        
+                        print(f"\nEditing [{idx}]: {target_item['raw']}")
+                        print("What would you like to edit?")
+                        print("[T]ype (I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [X]Delete | [Q]Cancel")
+                        e_cmd = get_char()
+                        
+                        if e_cmd == 'X':
+                            staging_buffer.pop(idx-1)
+                            last_error = f"Successfully deleted record at Idx {idx} from staging area."
+                            continue
+
+                        new_type = rec["type"]
+                        new_date = rec["raw_date"]
+                        new_cat = rec["category"]
+                        new_money = rec["raw_money"]
+                        new_desc = rec["description"]
+
+                        if e_cmd == 'T':
+                            new_type = input("Enter new Type (I/E): ").strip().upper()
+                        elif e_cmd == 'D':
+                            new_date = input("Enter new date (YYYY-MM-DD): ").strip()
+                        elif e_cmd == 'C':
+                            new_cat = input("Enter new Category: ").strip()
+                        elif e_cmd == 'M':
+                            new_money = input("Enter new Money amount: ").strip()
+                        elif e_cmd == 'I':
+                            new_desc = input("Enter new Description: ").strip()
+                        
+                        if e_cmd in ['T', 'D', 'C', 'M', 'I']:
+                            new_raw = f"{new_type} {new_date} {new_cat} {new_money} {new_desc}".strip()
+                            parsed_edit = Input.parse_staged_line(new_raw)
+                            if parsed_edit["valid"]:
+                                staging_buffer[idx-1] = parsed_edit
+                            else:
+                                last_error = f"Edit failed: {parsed_edit['error']}. Line reverted."
+                    else:
+                        last_error = "Invalid index number."
+                else:
+                     last_error = "Invalid input. Please enter a number."
+                     
+            elif user_input.upper().startswith('F '):
+                file_path = user_input[2:].strip()
+                invalid_count = 0
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.strip():
+                                file_parts = line.strip().split(" ", 3)
+                                if file_parts[0].upper() not in ['I', 'E']:
+                                    parsed = Input.parse_staged_line("E " + line.strip())
+                                else:
+                                    parsed = Input.parse_staged_line(line.strip())
+                                
+                                if parsed["valid"]:
+                                    staging_buffer.append(parsed)
+                                else:
+                                    invalid_count += 1
+                    if invalid_count > 0:
+                         last_error = f"File contained {invalid_count} invalid lines. They were skipped."
+                except FileNotFoundError:
+                    last_error = f"Error: File '{file_path}' not found."
+                except Exception as e:
+                    last_error = f"File reading error: {e}"
+            elif user_input:
+                parsed = Input.parse_staged_line(user_input)
+                if parsed["valid"]:
+                    staging_buffer.append(parsed)
+                else:
+                    last_error = f"'{parsed['raw']}' -> {parsed['error']}"
+
     def run(self):
         try:
             while True:
@@ -463,25 +652,7 @@ class FinanceSystem:
                 elif cmd == 'Y': 
                     self.show_details()
                 elif cmd == 'I':
-                    print("\n")
-                    while True:
-                        sub = input("[F]ile, [T]erminal, or [Q]Cancel? (F/T/Q): ").strip().upper()
-                        if sub in ['F', 'T', 'Q']:
-                            break
-                        print("Error: Please enter 'F', 'T', or 'Q'.")
-                    
-                    if sub == 'Q':
-                        continue
-                    elif sub == 'F':
-                        path = input("Enter file path: ").strip()
-                        if path:
-                            self.records.extend(Input.read_input(path, "txt"))
-                            self.save()
-                    elif sub == 'T':
-                        rec = Input.read_terminal()
-                        if rec: 
-                            self.records.append(rec)
-                            self.save()
+                    self._handle_input_menu()
         except KeyboardInterrupt:
             print("\n[System] Interrupted by user.")
         finally:

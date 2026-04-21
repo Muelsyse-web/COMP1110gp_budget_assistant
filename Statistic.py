@@ -52,11 +52,12 @@ def is_hybrid_anomaly(value, log_stats, raw_stats, pivot=1000.0, ignore_flag=Fal
     return abs(z) > 1.96
 
 def generate_barchart(money, max_money):
-    """Logarithmic Scaling for UI Visuals using Block characters"""
+    """Linear Scaling for UI Visuals - Allows pure relative visual comparison"""
     if max_money < EPSILON or money < EPSILON:
         return ""
     
-    exact_length = (math.log(money + 1) / math.log(max_money + 1)) * MAX_WIDTH
+    # Using Linear Math here to make '2' exactly twice as long as '1' based on visible filter bounds
+    exact_length = (money / max_money) * MAX_WIDTH
     full_blocks = int(exact_length)
     remainder = exact_length - full_blocks
     fractional_index = int(remainder * 8)

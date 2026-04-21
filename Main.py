@@ -23,6 +23,8 @@ class FinanceGUI(tk.Tk):
         self.range_min = tk.DoubleVar(value=0.0)
         self.range_max = tk.DoubleVar(value=0.0) 
         self.auto_suggest = tk.BooleanVar(value=True)
+        self.sort_by = tk.StringVar(value="Time")
+        self.sort_order = tk.StringVar(value="Descending")
 
         # Style
         style = ttk.Style(self)
@@ -30,6 +32,10 @@ class FinanceGUI(tk.Tk):
         style.configure('TNotebook.Tab', padding=[10, 5], font=('Segoe UI', 10, 'bold'))
         style.configure('Header.TLabel', font=('Segoe UI', 14, 'bold'))
         style.configure('Treeview', rowheight=25)
+        
+        # Add styles for Progressbar colors
+        style.configure("green.Horizontal.TProgressbar", background='green')
+        style.configure("red.Horizontal.TProgressbar", background='red')
         
         # Main Notebook structure
         self.notebook = ttk.Notebook(self)
@@ -142,6 +148,13 @@ class FinanceGUI(tk.Tk):
     def build_records(self):
         ctrl_frame = ttk.Frame(self.frame_records)
         ctrl_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(ctrl_frame, text="Sort By:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Combobox(ctrl_frame, textvariable=self.sort_by, values=["Time", "Money", "Category"], state="readonly", width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(ctrl_frame, text="Order:").pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Combobox(ctrl_frame, textvariable=self.sort_order, values=["Ascending", "Descending"], state="readonly", width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(ctrl_frame, text="Apply Sort", command=self.refresh_all).pack(side=tk.LEFT, padx=(5, 20))
+
         ttk.Button(ctrl_frame, text="Edit Selected", command=self.edit_selected_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(ctrl_frame, text="Delete Selected", command=self.delete_selected_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(ctrl_frame, text="Toggle Anomaly Ignore", command=self.toggle_anomaly).pack(side=tk.LEFT, padx=5)
@@ -207,32 +220,24 @@ class FinanceGUI(tk.Tk):
         ttk.Button(f2, text="Select .txt File", command=self.import_file).pack()
 
     def build_limits(self):
-        f = ttk.LabelFrame(self.frame_limits, text="Set Time Scale Limit", padding=10)
+        f = ttk.LabelFrame(self.frame_limits, text="Set Combined Limit (Time & Category)", padding=10)
         f.pack(fill=tk.X, pady=10)
         
         tk.Label(f, text="Scale:").grid(row=0, column=0, padx=5)
-        self.lim_scale = ttk.Combobox(f, values=["d (Daily)", "w (Weekly)", "m (Monthly)", "y (Yearly)"], state="readonly")
+        self.lim_scale = ttk.Combobox(f, values=["d (Daily)", "w (Weekly)", "m (Monthly)", "y (Yearly)", "all (All Time)"], state="readonly", width=12)
         self.lim_scale.set("m (Monthly)")
         self.lim_scale.grid(row=0, column=1, padx=5)
         
-        tk.Label(f, text="Amount:").grid(row=0, column=2, padx=5)
-        self.lim_amt = ttk.Entry(f)
-        self.lim_amt.grid(row=0, column=3, padx=5)
+        tk.Label(f, text="Category:").grid(row=0, column=2, padx=5)
+        self.lim_cat = ttk.Entry(f, width=15)
+        self.lim_cat.insert(0, "All")
+        self.lim_cat.grid(row=0, column=3, padx=5)
         
-        ttk.Button(f, text="Set Time Limit", command=self.set_time_limit).grid(row=0, column=4, padx=10)
-
-        c = ttk.LabelFrame(self.frame_limits, text="Set Category Limit", padding=10)
-        c.pack(fill=tk.X, pady=10)
+        tk.Label(f, text="Amount:").grid(row=0, column=4, padx=5)
+        self.lim_amt = ttk.Entry(f, width=15)
+        self.lim_amt.grid(row=0, column=5, padx=5)
         
-        tk.Label(c, text="Category:").grid(row=0, column=0, padx=5)
-        self.lim_cat = ttk.Entry(c)
-        self.lim_cat.grid(row=0, column=1, padx=5)
-        
-        tk.Label(c, text="Amount:").grid(row=0, column=2, padx=5)
-        self.lim_cat_amt = ttk.Entry(c)
-        self.lim_cat_amt.grid(row=0, column=3, padx=5)
-        
-        ttk.Button(c, text="Set Cat Limit", command=self.set_cat_limit).grid(row=0, column=4, padx=10)
+        ttk.Button(f, text="Set Limit", command=self.set_combined_limit).grid(row=0, column=6, padx=10)
 
         a = ttk.Frame(self.frame_limits, padding=10)
         a.pack(fill=tk.X)
@@ -272,6 +277,7 @@ class FinanceGUI(tk.Tk):
                     r = t_exp / sug_limit
                     self.lbl_limit_info.config(text=f"Auto-Suggested Limit ({scale_str}): ${sug_limit:,.2f} | Usage: {r*100:.1f}%")
                     self.prog_limit['value'] = min(100, r * 100)
+                    self.prog_limit.configure(style="red.Horizontal.TProgressbar" if r >= 1.0 else "green.Horizontal.TProgressbar")
                 else:
                     self.lbl_limit_info.config(text="Auto-Suggest: Need more data to predict limit.")
                     self.prog_limit['value'] = 0
@@ -281,6 +287,7 @@ class FinanceGUI(tk.Tk):
         else:
             self.lbl_limit_info.config(text=f"Limit ({limit_name}): ${limit_val:,.2f} | Rem: ${rem:,.2f} | Usage: {ratio*100:.1f}%")
             self.prog_limit['value'] = min(100, ratio * 100)
+            self.prog_limit.configure(style="red.Horizontal.TProgressbar" if ratio >= 1.0 else "green.Horizontal.TProgressbar")
 
         # Predict Budget
         if c_scale != "All":
@@ -298,6 +305,16 @@ class FinanceGUI(tk.Tk):
             self.tree.delete(row)
 
         all_records = inc + exp
+        
+        # Apply Sorting Logic
+        sort_desc = (self.sort_order.get() == "Descending")
+        if self.sort_by.get() == "Time":
+            all_records.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
+        elif self.sort_by.get() == "Money":
+            all_records.sort(key=lambda x: x["money"], reverse=sort_desc)
+        elif self.sort_by.get() == "Category":
+            all_records.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
+
         log_stats, raw_stats = Statistic.get_both_stats(all_records)
         m_list = [r["money"] for r in all_records if r["money"] > 0]
         max_v = max(m_list) if m_list else 0
@@ -418,24 +435,14 @@ class FinanceGUI(tk.Tk):
                 
         ttk.Button(edit_win, text="Save Changes", command=save_edit).grid(row=5, column=0, columnspan=2, pady=15)
 
-    def set_time_limit(self):
-        val = self.lim_scale.get()[0] # gets 'd', 'w', 'm', 'y'
+    def set_combined_limit(self):
+        scale_val = self.lim_scale.get().split()[0] # gets 'd', 'w', 'm', 'y', 'all'
+        cat_val = self.lim_cat.get().strip() or "All"
         try:
             amt = float(self.lim_amt.get())
-            self.lm.set_limit("time", val, amt)
-            messagebox.showinfo("Success", f"Time limit set for '{val}' to ${amt}")
+            self.lm.set_limit(scale_val, cat_val, amt)
+            messagebox.showinfo("Success", f"Limit set for Scale '{scale_val}', Category '{cat_val}' to ${amt}")
             self.refresh_all()
-        except ValueError:
-            messagebox.showerror("Error", "Invalid amount")
-
-    def set_cat_limit(self):
-        cat = self.lim_cat.get().strip()
-        try:
-            amt = float(self.lim_cat_amt.get())
-            if cat:
-                self.lm.set_limit("cat", cat, amt)
-                messagebox.showinfo("Success", f"Category limit set for '{cat}' to ${amt}")
-                self.refresh_all()
         except ValueError:
             messagebox.showerror("Error", "Invalid amount")
 

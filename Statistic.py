@@ -6,53 +6,77 @@ EPSILON = 1e-9 # Prevent division by zero
 MAX_WIDTH = 40 # Standard width for bars
 BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] # 1/8 resolution
 
-def calculate_log_zscore(log_value, log_mean, log_std_dev):
-    """Calculate Z-score safely on log-transformed data"""
-    if log_std_dev < EPSILON:
-        return 0.0
-    return (log_value - log_mean) / log_std_dev
-
-def is_anomaly(value, log_mean, log_std_dev, ignore_flag=False):
-    """Detect outliers based on Log-Normal Z-score threshold of > 1.96 (95% CI)."""
-    if ignore_flag or value <= 0:
-        return False
-    log_val = math.log(value)
-    z = calculate_log_zscore(log_val, log_mean, log_std_dev)
-    return abs(z) > 1.96
-
 def get_both_stats(records):
-    """Extracts both log-normal and raw normal distribution parameters"""
-    expenses = [r["money"] for r in records if r["money"] > 0 and not r.get("ignore_anomaly", False) and not r.get("is_income", False)]
-    if not expenses:
+    """
+    Calculates both Arithmetic (Raw) and Geometric (Log) baselines simultaneously.
+    Implements a 'Safety Filter' to prevent high-value items from masking low-value anomalies.
+    """
+    valid_money = [r["money"] for r in records if r["money"] > 0 and not r.get("ignore_anomaly", False)]
+    if not valid_money:
         return (0.0, 0.0), (0.0, 0.0)
+
+    # --- 1. Geometric Baseline (For High-Value items) ---
+    # We use ALL core data for this because logarithms handle the scale naturally.
+    sorted_money = sorted(valid_money)
+    if len(sorted_money) > 5:
+        trim_idx = max(1, int(len(sorted_money) * 0.1))
+        core_high = sorted_money[trim_idx:-trim_idx]
+    else:
+        core_high = sorted_money
+        
+    core_logs = [math.log(m) for m in core_high]
+    log_mean = statistics.mean(core_logs) if core_logs else 0.0
+    log_std = statistics.stdev(core_logs) if len(core_logs) > 1 else 0.0
+
+    # --- 2. Arithmetic Baseline (For Lifestyle spikes) ---
+    # SAFETY FILTER: Only use items <= $1000 to calculate this baseline.
+    # This prevents $12,000 Rent from masking an $850 lifestyle anomaly.
+    lifestyle_items = [m for m in valid_money if m <= 1000.0]
     
-    log_money = [math.log(m) for m in expenses]
-    log_mean = statistics.mean(log_money) if log_money else 0.0
-    log_std = statistics.stdev(log_money) if len(log_money) > 1 else 0.0
-    
-    raw_mean = statistics.mean(expenses) if expenses else 0.0
-    raw_std = statistics.stdev(expenses) if len(expenses) > 1 else 0.0
-    
+    if len(lifestyle_items) > 5:
+        trim_idx_life = max(1, int(len(lifestyle_items) * 0.1))
+        core_lifestyle = sorted(lifestyle_items)[trim_idx_life:-trim_idx_life]
+    else:
+        core_lifestyle = lifestyle_items
+
+    if len(core_lifestyle) > 1:
+        raw_mean = statistics.mean(core_lifestyle)
+        raw_std = statistics.stdev(core_lifestyle)
+    elif len(core_lifestyle) == 1:
+        raw_mean = core_lifestyle[0]
+        raw_std = 0.0
+    else:
+        # Fallback if no small items exist yet
+        raw_mean = statistics.mean(core_high) if core_high else 0.0
+        raw_std = statistics.stdev(core_high) if len(core_high) > 1 else 0.0
+
     return (log_mean, log_std), (raw_mean, raw_std)
 
 def is_hybrid_anomaly(value, log_stats, raw_stats, pivot=1000.0, ignore_flag=False):
-    """Uses Log-Normal for small values and standard Normal for huge values"""
+    """
+    Multi-Model Switching Logic:
+    - Values > Pivot: Log-Normal distribution (Forgives proportional changes on big bills).
+    - Values <= Pivot: Normal distribution (Catches absolute dollar spikes on daily habits).
+    """
     if ignore_flag or value <= 0:
         return False
+
     log_mean, log_std = log_stats
     raw_mean, raw_std = raw_stats
-    
-    if value < pivot:
-        if log_std < EPSILON: return False
-        z = calculate_log_zscore(math.log(value), log_mean, log_std)
+
+    # Tier 1: High-Value Logic (Log-Normal, 95% Confidence)
+    if value > pivot:
+        log_val = math.log(value)
+        z_log = (log_val - log_mean) / (log_std + EPSILON)
+        return abs(z_log) > 1.96
+
+    # Tier 2: Lifestyle Logic (Raw Arithmetic, strict >= 2.0 rule)
     else:
-        if raw_std < EPSILON: return False
-        z = (value - raw_mean) / raw_std
-        
-    return abs(z) > 1.96
+        z_raw = (value - raw_mean) / (raw_std + EPSILON)
+        return abs(z_raw) >= 2.0
 
 def generate_barchart(money, max_money):
-    """Logarithmic Scaling for UI Visuals using Block characters"""
+    """Logarithmic Scaling for UI Visuals"""
     if max_money < EPSILON or money < EPSILON:
         return ""
     
@@ -99,23 +123,18 @@ def predict_budget(records, target_days=30):
     if not expenses:
         return 0.0
 
-    money_list = [r["money"] for r in expenses if r["money"] > 0]
-    if not money_list:
-        return 0.0
-        
-    log_money = [math.log(m) for m in money_list]
-    log_mean = statistics.mean(log_money) if len(log_money) >= 1 else 0.0
-    log_std = statistics.stdev(log_money) if len(log_money) > 1 else 0.0
+    # Fetch both baselines for the hybrid cleaning phase
+    log_stats, raw_stats = get_both_stats(expenses)
 
     fixed_costs = 0.0
     variable_records = []
 
-    # Clean data: Separate anomalies/ignored into Fixed Costs
+    # Clean data: Separate hybrid anomalies/ignored into Fixed Costs
     for r in expenses:
         if r.get("ignore_anomaly", False):
             fixed_costs += r["money"]
         else:
-            if not is_anomaly(r["money"], log_mean, log_std):
+            if not is_hybrid_anomaly(r["money"], log_stats, raw_stats):
                 variable_records.append(r)
 
     if not variable_records:

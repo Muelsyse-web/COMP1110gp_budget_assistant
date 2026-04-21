@@ -206,14 +206,12 @@ class FinanceSystem:
                     print(f" (No records found)")
                     return []
                 
-                m_list = [r["money"] for r in records if r["money"] > 0]
-                log_m_list = [math.log(m) for m in m_list]
+                # Retrieve both statistical baselines for the Hybrid Engine
+                log_stats, raw_stats = Statistic.get_both_stats(records)
                 
-                log_mean_v = statistics.mean(log_m_list) if log_m_list else 0.0
-                log_std_v = statistics.stdev(log_m_list) if len(log_m_list) > 1 else 0.0
+                m_list = [r["money"] for r in records if r["money"] > 0]
                 max_v = max(m_list) if m_list else 0
                 
-                # Replace Alarm header with blank padding for Income table
                 alarm_header = "" if is_income else "Alarm"
                 print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text(alarm_header, 10) + "| Bar Chart")
                 print("-" * total_line_width)
@@ -226,11 +224,10 @@ class FinanceSystem:
                     except ValueError as e:
                         warnings_list.append(f"{C_ANO}ValueError: *[{title} Idx {i}]*, {str(e)}{C_RESET}")
 
-                    # Disable Alarm checks and labels for Income
                     if is_income:
                         alarm = ""
                     else:
-                        is_ano = Statistic.is_anomaly(r["money"], log_mean_v, log_std_v, r.get("ignore_anomaly", False))
+                        is_ano = Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, pivot=1000.0, ignore_flag=r.get("ignore_anomaly", False))
                         if r.get("ignore_anomaly", False):
                             alarm = f"{C_INC}Ignored{C_RESET}"
                         else:
@@ -284,7 +281,6 @@ class FinanceSystem:
                 print("\nEdit [I]ncome or [E]xpense record? (I/E)")
                 ie_cmd = get_char()
                 
-                # Screen Clear to isolate the selected table
                 os.system('cls' if os.name == 'nt' else 'clear')
                 
                 if ie_cmd == 'I':

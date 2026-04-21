@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 
-# ANSI Colors for Error Handling
+# ANSI Colors for Error Handling (kept for terminal logging if needed)
 C_EXP, C_RESET = '\033[91m', '\033[0m'
 
 def validate_date(date_str, context=""):
@@ -55,7 +55,6 @@ def parse_staged_line(raw):
             record["year"], record["month"], record["day"] = dt.year, dt.month, dt.day
         except ValueError as e:
             valid = False
-            # e.g., will print "time data '2026-10-41' does not match format..." or "day is out of range for month"
             error = f"Date error: {str(e).capitalize()}"
 
     # 4. Validate Money
@@ -109,7 +108,6 @@ def read_input(file_path, mode="json"):
                     line_num += 1
     except json.JSONDecodeError as e:
         print(f"\n{C_EXP}[CRITICAL SYSTEM HALT] {file_path} is corrupted: {e}{C_RESET}")
-        print(f"{C_EXP}To prevent permanent data loss, the system will not boot until the JSON syntax is fixed.{C_RESET}\n")
         sys.exit(1)
     except Exception as e:
         print(f"File reading error: {e}")

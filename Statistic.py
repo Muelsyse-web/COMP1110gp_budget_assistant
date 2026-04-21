@@ -9,28 +9,46 @@ BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] # 1/8 reso
 def get_both_stats(records):
     """
     Calculates both Arithmetic (Raw) and Geometric (Log) baselines simultaneously.
-    Uses trimming to prevent the Masking Effect from massive outliers.
+    Implements a 'Safety Filter' to prevent high-value items from masking low-value anomalies.
     """
     valid_money = [r["money"] for r in records if r["money"] > 0 and not r.get("ignore_anomaly", False)]
     if not valid_money:
         return (0.0, 0.0), (0.0, 0.0)
 
-    # Trim top/bottom 10% to find the true behavioral core
+    # --- 1. Geometric Baseline (For High-Value items) ---
+    # We use ALL core data for this because logarithms handle the scale naturally.
     sorted_money = sorted(valid_money)
     if len(sorted_money) > 5:
         trim_idx = max(1, int(len(sorted_money) * 0.1))
-        core_money = sorted_money[trim_idx:-trim_idx]
+        core_high = sorted_money[trim_idx:-trim_idx]
     else:
-        core_money = sorted_money
-
-    # 1. Raw Normal Baseline
-    raw_mean = statistics.mean(core_money) if core_money else 0.0
-    raw_std = statistics.stdev(core_money) if len(core_money) > 1 else 0.0
-
-    # 2. Log-Normal Baseline
-    core_logs = [math.log(m) for m in core_money]
+        core_high = sorted_money
+        
+    core_logs = [math.log(m) for m in core_high]
     log_mean = statistics.mean(core_logs) if core_logs else 0.0
     log_std = statistics.stdev(core_logs) if len(core_logs) > 1 else 0.0
+
+    # --- 2. Arithmetic Baseline (For Lifestyle spikes) ---
+    # SAFETY FILTER: Only use items <= $1000 to calculate this baseline.
+    # This prevents $12,000 Rent from masking an $850 lifestyle anomaly.
+    lifestyle_items = [m for m in valid_money if m <= 1000.0]
+    
+    if len(lifestyle_items) > 5:
+        trim_idx_life = max(1, int(len(lifestyle_items) * 0.1))
+        core_lifestyle = sorted(lifestyle_items)[trim_idx_life:-trim_idx_life]
+    else:
+        core_lifestyle = lifestyle_items
+
+    if len(core_lifestyle) > 1:
+        raw_mean = statistics.mean(core_lifestyle)
+        raw_std = statistics.stdev(core_lifestyle)
+    elif len(core_lifestyle) == 1:
+        raw_mean = core_lifestyle[0]
+        raw_std = 0.0
+    else:
+        # Fallback if no small items exist yet
+        raw_mean = statistics.mean(core_high) if core_high else 0.0
+        raw_std = statistics.stdev(core_high) if len(core_high) > 1 else 0.0
 
     return (log_mean, log_std), (raw_mean, raw_std)
 
@@ -46,13 +64,13 @@ def is_hybrid_anomaly(value, log_stats, raw_stats, pivot=1000.0, ignore_flag=Fal
     log_mean, log_std = log_stats
     raw_mean, raw_std = raw_stats
 
-    # Tier 1: High-Value Logic (Log-Normal)
+    # Tier 1: High-Value Logic (Log-Normal, 95% Confidence)
     if value > pivot:
         log_val = math.log(value)
         z_log = (log_val - log_mean) / (log_std + EPSILON)
         return abs(z_log) > 1.96
 
-    # Tier 2: Lifestyle Logic (Raw Normal)
+    # Tier 2: Lifestyle Logic (Raw Arithmetic, strict >= 2.0 rule)
     else:
         z_raw = (value - raw_mean) / (raw_std + EPSILON)
         return abs(z_raw) >= 2.0

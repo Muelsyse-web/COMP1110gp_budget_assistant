@@ -12,7 +12,7 @@ class FinanceGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Budget Assistant GUI (Tkinter)")
-        self.geometry("1000x700")
+        self.geometry("1000x750")
         self.configure(padx=10, pady=10)
         
         # State Data
@@ -20,8 +20,11 @@ class FinanceGUI(tk.Tk):
         self.lm = LimitManager()
         self.target_date_str = tk.StringVar(value="")
         self.category_filter = tk.StringVar(value="All")
-        self.range_min = tk.DoubleVar(value=0.0)
-        self.range_max = tk.DoubleVar(value=0.0) 
+        
+        # Changed to StringVar to handle empty inputs gracefully
+        self.range_min = tk.StringVar(value="")
+        self.range_max = tk.StringVar(value="") 
+        
         self.auto_suggest = tk.BooleanVar(value=True)
         self.sort_by = tk.StringVar(value="Time")
         self.sort_order = tk.StringVar(value="Descending")
@@ -88,8 +91,17 @@ class FinanceGUI(tk.Tk):
         filtered = []
         c_scale, target_dict = self.get_current_scale()
         c_cat = self.category_filter.get()
-        rmin = self.range_min.get()
-        rmax = self.range_max.get() if self.range_max.get() > 0 else float('inf')
+        
+        # Safe parsing for money range
+        try:
+            rmin = float(self.range_min.get().strip()) if self.range_min.get().strip() else 0.0
+        except ValueError:
+            rmin = 0.0
+            
+        try:
+            rmax = float(self.range_max.get().strip()) if self.range_max.get().strip() else float('inf')
+        except ValueError:
+            rmax = float('inf')
 
         for r in self.records:
             if target_dict:
@@ -110,14 +122,19 @@ class FinanceGUI(tk.Tk):
         f_frame.pack(fill=tk.X, pady=(0, 15))
 
         ttk.Label(f_frame, text="Target Date (YYYY / YYYY-MM / YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
-        ttk.Entry(f_frame, textvariable=self.target_date_str, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Entry(f_frame, textvariable=self.target_date_str, width=15).grid(row=0, column=1, padx=5, pady=5)
         
         ttk.Label(f_frame, text="Category:").grid(row=0, column=2, padx=5, pady=5)
-        self.cat_cb = ttk.Combobox(f_frame, textvariable=self.category_filter, values=["All"], state="readonly", width=15)
+        self.cat_cb = ttk.Combobox(f_frame, textvariable=self.category_filter, values=["All"], state="readonly", width=12)
         self.cat_cb.grid(row=0, column=3, padx=5, pady=5)
         
-        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=4, padx=15)
-        ttk.Button(f_frame, text="Quit Program", command=self.on_close).grid(row=0, column=5, padx=5)
+        ttk.Label(f_frame, text="Amount:").grid(row=0, column=4, padx=5, pady=5)
+        ttk.Entry(f_frame, textvariable=self.range_min, width=8).grid(row=0, column=5, padx=2)
+        ttk.Label(f_frame, text="-").grid(row=0, column=6)
+        ttk.Entry(f_frame, textvariable=self.range_max, width=8).grid(row=0, column=7, padx=2)
+        
+        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=8, padx=15)
+        ttk.Button(f_frame, text="Quit Program", command=self.on_close).grid(row=0, column=9, padx=5)
 
         # Overview Stats
         stats_frame = ttk.Frame(self.frame_dash)
@@ -361,25 +378,80 @@ class FinanceGUI(tk.Tk):
             self.e_desc.delete(0, tk.END)
             self.refresh_all()
         else:
-            messagebox.showerror("Validation Error", parsed["error"])
+            # Task 4 FIX: Explicit invalid input alarm showing exact error
+            messagebox.showerror("Invalid Input", f"Failed to add record.\n\nError Type: {parsed['error']}")
 
     def import_file(self):
+        # Task 5 FIX: Reads line by line, checks validity, and reports formatting errors natively
         fpath = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
-        if fpath:
-            recs = Input.read_input(fpath, "txt")
-            if recs:
-                self.records.extend(recs)
-                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-                self.save()
-                messagebox.showinfo("Success", f"Imported {len(recs)} records.")
-                self.refresh_all()
-            else:
-                messagebox.showwarning("Warning", "No valid records found in file.")
+        if not fpath: return
+        
+        valid_recs = []
+        invalid_lines = []
+        
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                for line in f:
+                    raw_line = line.strip()
+                    if not raw_line: continue
+                    
+                    # Assume Expense if the line doesn't start with I or E
+                    parts = raw_line.split(" ")
+                    if parts and parts[0].upper() not in ['I', 'E']:
+                        raw_line = "E " + raw_line
+
+                    parsed = Input.parse_staged_line(raw_line)
+                    if parsed["valid"]:
+                        valid_recs.append(parsed["record"])
+                    else:
+                        invalid_lines.append((raw_line, parsed["error"]))
+        except Exception as e:
+            messagebox.showerror("File Read Error", f"Could not process file: {e}")
+            return
+            
+        if valid_recs:
+            self.records.extend(valid_recs)
+            self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+            self.save()
+            self.refresh_all()
+            
+        if invalid_lines:
+            self.show_import_errors(len(valid_recs), invalid_lines)
+        else:
+            messagebox.showinfo("Success", f"Imported {len(valid_recs)} records successfully.")
+
+    def show_import_errors(self, valid_count, invalid_lines):
+        """Displays a detailed report of invalid rows found during file import"""
+        err_win = tk.Toplevel(self)
+        err_win.title("Import Report")
+        err_win.geometry("600x400")
+        err_win.grab_set()
+        
+        ttk.Label(err_win, text=f"Imported {valid_count} valid records.", font=('Segoe UI', 10, 'bold'), foreground="darkgreen").pack(pady=5)
+        ttk.Label(err_win, text=f"Found {len(invalid_lines)} invalid rows that were skipped:", font=('Segoe UI', 10, 'bold'), foreground="darkred").pack(pady=5)
+        
+        text_area = tk.Text(err_win, wrap=tk.WORD, bg="#ffffff", font=("Consolas", 10))
+        text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        text_area.tag_configure("black", foreground="black")
+        text_area.tag_configure("red", foreground="red", font=("Consolas", 10, "bold"))
+        
+        for raw, error in invalid_lines:
+            text_area.insert(tk.END, f"{raw} ", "black")
+            text_area.insert(tk.END, f"[{error}]\n", "red")
+        
+        text_area.config(state=tk.DISABLED)
+        ttk.Button(err_win, text="Close", command=err_win.destroy).pack(pady=10)
 
     def edit_selected_record(self):
         sel = self.tree.selection()
         if not sel: 
             messagebox.showwarning("Warning", "Please select a record to edit first.")
+            return
+            
+        # Task 3 FIX: Refuse multiple selection
+        if len(sel) > 1:
+            messagebox.showerror("Error", "You can only edit one record at a time. Please select only one row.")
             return
             
         idx = int(sel[0]) # IID tracks the global index in self.records
@@ -431,7 +503,7 @@ class FinanceGUI(tk.Tk):
                 edit_win.destroy()
                 messagebox.showinfo("Success", "Record updated successfully.")
             else:
-                messagebox.showerror("Error", parsed["error"])
+                messagebox.showerror("Invalid Input", f"Failed to edit record.\n\nError Type: {parsed['error']}")
                 
         ttk.Button(edit_win, text="Save Changes", command=save_edit).grid(row=5, column=0, columnspan=2, pady=15)
 

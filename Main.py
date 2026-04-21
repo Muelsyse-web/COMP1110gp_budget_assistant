@@ -1,405 +1,660 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
-import json
 import os
+import sys
+import json
+import re
 import math
+import statistics 
 from datetime import datetime
 from Limit import LimitManager
 import Input
 import Statistic
 
-class FinanceGUI(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Budget Assistant GUI (Tkinter)")
-        self.geometry("1000x700")
-        self.configure(padx=10, pady=10)
+# ANSI Colors
+C_INC = '\033[92m'  # Green (Income)
+C_EXP = '\033[91m'  # Red (Expenses)
+C_ANO = '\033[93m'  # Yellow (Anomalies)
+C_BAR = '\033[96m'  # Cyan (Bar Charts)
+C_PUR = '\033[95m'  # Purple (Input Errors)
+C_RESET = '\033[0m'
+
+def get_visual_len(text):
+    """Calculates the visual width of a string in the terminal, counting CJK characters as 2 spaces."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    plain = ansi_escape.sub('', str(text))
+    return sum(2 if ord(c) > 127 else 1 for c in plain)
+
+def pad_text(text, width):
+    curr_len = get_visual_len(text)
+    return str(text) + (" " * max(0, width - curr_len))
+
+def round_to_3sf(num):
+    """Rounds a number to 3 significant figures for psychological limit setting"""
+    if num == 0.0:
+        return 0.0
+    try:
+        return round(num, 3 - int(math.floor(math.log10(abs(num)))) - 1)
+    except ValueError:
+        return 0.0
+
+def get_char():
+    """Captures single keystrokes cross-platform, protected against special characters."""
+    try:
+        import msvcrt
+        key = msvcrt.getch()
+        if key in [b'\x00', b'\xe0']:
+            msvcrt.getch() 
+            return ""
+        return key.decode('utf-8', errors='ignore').upper() 
+    except ImportError:
+        import tty, termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        return ch.upper()
         
-        # State Data
+class FinanceSystem:
+    def __init__(self):
         self.records = Input.read_input("data.json", "json")
         self.lm = LimitManager()
-        self.scale = tk.StringVar(value="All")
-        self.target_date_str = tk.StringVar(value="")
-        self.category_filter = tk.StringVar(value="All")
-        self.range_min = tk.DoubleVar(value=0.0)
-        self.range_max = tk.DoubleVar(value=0.0) 
-        self.auto_suggest = tk.BooleanVar(value=True)
-
-        # Style
-        style = ttk.Style(self)
-        style.theme_use('clam')
-        style.configure('TNotebook.Tab', padding=[10, 5], font=('Segoe UI', 10, 'bold'))
-        style.configure('Header.TLabel', font=('Segoe UI', 14, 'bold'))
-        style.configure('Treeview', rowheight=25)
+        self.scale = "All"
+        self.target_date = None
+        self.category_filter = "All"
+        self.range_filter = (0.0, float('inf'))
+        self.auto_suggest = True 
         
-        # Main Notebook structure
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Setup Tabs
-        self.frame_dash = ttk.Frame(self.notebook, padding=10)
-        self.frame_records = ttk.Frame(self.notebook, padding=10)
-        self.frame_input = ttk.Frame(self.notebook, padding=10)
-        self.frame_limits = ttk.Frame(self.notebook, padding=10)
-
-        self.notebook.add(self.frame_dash, text="Dashboard")
-        self.notebook.add(self.frame_records, text="Records & Details")
-        self.notebook.add(self.frame_input, text="Input Data")
-        self.notebook.add(self.frame_limits, text="Limits Config")
-
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
-
-        self.build_dashboard()
-        self.build_records()
-        self.build_input()
-        self.build_limits()
-        
-        # Intercept window close
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-
     def save(self):
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(self.records, f, indent=4)
 
     def get_filtered_records(self):
         filtered = []
-        c_scale = self.scale.get()
-        t_date = self.target_date_str.get().strip()
-        c_cat = self.category_filter.get()
-        rmin = self.range_min.get()
-        rmax = self.range_max.get() if self.range_max.get() > 0 else float('inf')
-
-        target_dict = None
-        if t_date:
-            parts = t_date.split('-')
-            if c_scale == "Year" and len(parts) >= 1:
-                target_dict = {"year": int(parts[0])}
-            elif c_scale == "Month" and len(parts) >= 2:
-                target_dict = {"year": int(parts[0]), "month": int(parts[1])}
-            elif c_scale == "Day" and len(parts) >= 3:
-                target_dict = {"year": int(parts[0]), "month": int(parts[1]), "day": int(parts[2])}
-
         for r in self.records:
-            if c_scale != "All" and target_dict:
-                if "year" in target_dict and r["year"] != target_dict["year"]: continue
-                if "month" in target_dict and r["month"] != target_dict["month"]: continue
-                if "day" in target_dict and r["day"] != target_dict["day"]: continue
+            if self.scale == "Year" and self.target_date:
+                if r["year"] != self.target_date["year"]: continue
+            elif self.scale == "Month" and self.target_date:
+                if r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"]: continue
+            elif self.scale == "Day" and self.target_date:
+                if r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]: continue
             
-            if c_cat != "All" and r["category"] != c_cat: continue
-            if not (rmin <= r["money"] <= rmax): continue
+            if self.category_filter != "All" and r["category"] != self.category_filter:
+                continue
+            
+            if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]):
+                continue
                 
             filtered.append(r)
         return filtered
 
-    # ================= UI BUILDERS =================
-    def build_dashboard(self):
-        # Filters Header
-        f_frame = ttk.LabelFrame(self.frame_dash, text="Global Filters", padding=10)
-        f_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(f_frame, text="Time Scale:").grid(row=0, column=0, padx=5, pady=5)
-        scale_cb = ttk.Combobox(f_frame, textvariable=self.scale, values=["All", "Year", "Month", "Day"], state="readonly", width=10)
-        scale_cb.grid(row=0, column=1, padx=5, pady=5)
+    def draw_dashboard(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
         
-        ttk.Label(f_frame, text="Target Date:").grid(row=0, column=2, padx=5, pady=5)
-        ttk.Entry(f_frame, textvariable=self.target_date_str, width=15).grid(row=0, column=3, padx=5, pady=5)
-        
-        ttk.Label(f_frame, text="Category:").grid(row=0, column=4, padx=5, pady=5)
-        self.cat_cb = ttk.Combobox(f_frame, textvariable=self.category_filter, values=["All"], state="readonly", width=15)
-        self.cat_cb.grid(row=0, column=5, padx=5, pady=5)
-        
-        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=6, padx=15)
-
-        # Overview Stats
-        stats_frame = ttk.Frame(self.frame_dash)
-        stats_frame.pack(fill=tk.X, pady=10)
-        
-        self.lbl_exp = ttk.Label(stats_frame, text="Total Expenses: $0.00", font=('Segoe UI', 16, 'bold'), foreground="darkred")
-        self.lbl_exp.pack(side=tk.LEFT, padx=20)
-        
-        self.lbl_inc = ttk.Label(stats_frame, text="Total Income: $0.00", font=('Segoe UI', 16, 'bold'), foreground="darkgreen")
-        self.lbl_inc.pack(side=tk.LEFT, padx=20)
-
-        # Limits Display
-        limit_frame = ttk.LabelFrame(self.frame_dash, text="Real-Time Limit Progress", padding=10)
-        limit_frame.pack(fill=tk.X, pady=10)
-        
-        self.lbl_limit_info = ttk.Label(limit_frame, text="", font=('Segoe UI', 10))
-        self.lbl_limit_info.pack(anchor="w")
-        
-        self.prog_limit = ttk.Progressbar(limit_frame, orient="horizontal", length=400, mode="determinate")
-        self.prog_limit.pack(fill=tk.X, pady=5)
-
-        # Predictions
-        pred_frame = ttk.LabelFrame(self.frame_dash, text="Statistical Engine", padding=10)
-        pred_frame.pack(fill=tk.X, pady=10)
-        self.lbl_prediction = ttk.Label(pred_frame, text="Predicted Budget: N/A", font=('Segoe UI', 12))
-        self.lbl_prediction.pack(anchor="w")
-
-    def build_records(self):
-        ctrl_frame = ttk.Frame(self.frame_records)
-        ctrl_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(ctrl_frame, text="Delete Selected", command=self.delete_selected_record).pack(side=tk.LEFT, padx=5)
-        ttk.Button(ctrl_frame, text="Toggle Anomaly Ignore", command=self.toggle_anomaly).pack(side=tk.LEFT, padx=5)
-        
-        self.tree = ttk.Treeview(self.frame_records, columns=("Idx", "Date", "Type", "Cat", "Money", "Desc", "Alarm", "Bar"), show='headings')
-        self.tree.heading("Idx", text="Idx")
-        self.tree.heading("Date", text="Date")
-        self.tree.heading("Type", text="Type")
-        self.tree.heading("Cat", text="Category")
-        self.tree.heading("Money", text="Money")
-        self.tree.heading("Desc", text="Description")
-        self.tree.heading("Alarm", text="Alarm Status")
-        self.tree.heading("Bar", text="Log Bar Chart")
-        
-        self.tree.column("Idx", width=40, anchor="center")
-        self.tree.column("Date", width=100, anchor="center")
-        self.tree.column("Type", width=70, anchor="center")
-        self.tree.column("Cat", width=120)
-        self.tree.column("Money", width=100, anchor="e")
-        self.tree.column("Desc", width=200)
-        self.tree.column("Alarm", width=100, anchor="center")
-        self.tree.column("Bar", width=250)
-
-        # Tags for colors
-        self.tree.tag_configure('income', foreground='darkgreen')
-        self.tree.tag_configure('expense', foreground='black')
-        self.tree.tag_configure('anomaly', foreground='red', font=('Segoe UI', 9, 'bold'))
-
-        vsb = ttk.Scrollbar(self.frame_records, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def build_input(self):
-        f1 = ttk.LabelFrame(self.frame_input, text="Manual Entry", padding=15)
-        f1.pack(fill=tk.X, pady=10)
-        
-        tk.Label(f1, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
-        self.e_date = ttk.Entry(f1)
-        self.e_date.grid(row=0, column=1, padx=5, pady=5)
-        
-        tk.Label(f1, text="Type:").grid(row=0, column=2, padx=5, pady=5)
-        self.e_type = ttk.Combobox(f1, values=["Expense", "Income"], state="readonly", width=10)
-        self.e_type.set("Expense")
-        self.e_type.grid(row=0, column=3, padx=5, pady=5)
-        
-        tk.Label(f1, text="Category:").grid(row=1, column=0, padx=5, pady=5)
-        self.e_cat = ttk.Entry(f1)
-        self.e_cat.grid(row=1, column=1, padx=5, pady=5)
-        
-        tk.Label(f1, text="Money:").grid(row=1, column=2, padx=5, pady=5)
-        self.e_money = ttk.Entry(f1)
-        self.e_money.grid(row=1, column=3, padx=5, pady=5)
-        
-        tk.Label(f1, text="Desc:").grid(row=2, column=0, padx=5, pady=5)
-        self.e_desc = ttk.Entry(f1, width=35)
-        self.e_desc.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky="w")
-        
-        ttk.Button(f1, text="Add Record", command=self.add_manual_record).grid(row=3, column=0, columnspan=4, pady=10)
-
-        f2 = ttk.LabelFrame(self.frame_input, text="Batch Import", padding=15)
-        f2.pack(fill=tk.X, pady=10)
-        ttk.Button(f2, text="Select .txt File", command=self.import_file).pack()
-
-    def build_limits(self):
-        f = ttk.LabelFrame(self.frame_limits, text="Set Time Scale Limit", padding=10)
-        f.pack(fill=tk.X, pady=10)
-        
-        tk.Label(f, text="Scale:").grid(row=0, column=0, padx=5)
-        self.lim_scale = ttk.Combobox(f, values=["d (Daily)", "w (Weekly)", "m (Monthly)", "y (Yearly)"], state="readonly")
-        self.lim_scale.set("m (Monthly)")
-        self.lim_scale.grid(row=0, column=1, padx=5)
-        
-        tk.Label(f, text="Amount:").grid(row=0, column=2, padx=5)
-        self.lim_amt = ttk.Entry(f)
-        self.lim_amt.grid(row=0, column=3, padx=5)
-        
-        ttk.Button(f, text="Set Time Limit", command=self.set_time_limit).grid(row=0, column=4, padx=10)
-
-        c = ttk.LabelFrame(self.frame_limits, text="Set Category Limit", padding=10)
-        c.pack(fill=tk.X, pady=10)
-        
-        tk.Label(c, text="Category:").grid(row=0, column=0, padx=5)
-        self.lim_cat = ttk.Entry(c)
-        self.lim_cat.grid(row=0, column=1, padx=5)
-        
-        tk.Label(c, text="Amount:").grid(row=0, column=2, padx=5)
-        self.lim_cat_amt = ttk.Entry(c)
-        self.lim_cat_amt.grid(row=0, column=3, padx=5)
-        
-        ttk.Button(c, text="Set Cat Limit", command=self.set_cat_limit).grid(row=0, column=4, padx=10)
-
-        a = ttk.Frame(self.frame_limits, padding=10)
-        a.pack(fill=tk.X)
-        ttk.Checkbutton(a, text="Enable Auto-Suggested Limits (Machine Learning)", variable=self.auto_suggest, command=self.refresh_all).pack(anchor="w")
-
-    # ================= LOGIC & REFRESH =================
-    def on_tab_change(self, event):
-        self.refresh_all()
-
-    def refresh_all(self):
-        filtered = self.get_filtered_records()
-        exp = [r for r in filtered if not r.get("is_income", False)]
-        inc = [r for r in filtered if r.get("is_income", False)]
+        filtered_recs = self.get_filtered_records()
+        exp = [r for r in filtered_recs if not r.get("is_income", False)]
+        inc = [r for r in filtered_recs if r.get("is_income", False)]
         
         t_exp = sum(r["money"] for r in exp)
         t_inc = sum(r["money"] for r in inc)
-
-        # Update categories list in combobox
-        cats = ["All"] + sorted(list(set(r["category"] for r in self.records)))
-        self.cat_cb['values'] = cats
-
-        # Dashboard refresh
-        self.lbl_exp.config(text=f"Total Expenses: ${t_exp:,.2f}")
-        self.lbl_inc.config(text=f"Total Income: ${t_inc:,.2f}")
-
-        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale.get(), self.category_filter.get())
         
-        if self.scale.get() == "All" and limit_val <= 1e-9:
-            self.lbl_limit_info.config(text="Limit: N/A in 'All' Time Scale. Switch Time Filter to view limits.")
-            self.prog_limit['value'] = 0
-        elif limit_val <= 1e-9:
-            if self.auto_suggest.get():
-                scale_str, target_days = Statistic.determine_scale(exp, self.scale.get())
-                sug_limit = Statistic.predict_budget(exp, target_days)
-                if sug_limit > 1e-9:
-                    r = t_exp / sug_limit
-                    self.lbl_limit_info.config(text=f"Auto-Suggested Limit ({scale_str}): ${sug_limit:,.2f} | Usage: {r*100:.1f}%")
-                    self.prog_limit['value'] = min(100, r * 100)
-                else:
-                    self.lbl_limit_info.config(text="Auto-Suggest: Need more data to predict limit.")
-                    self.prog_limit['value'] = 0
-            else:
-                self.lbl_limit_info.config(text="Limit: Not Set")
-                self.prog_limit['value'] = 0
-        else:
-            self.lbl_limit_info.config(text=f"Limit ({limit_name}): ${limit_val:,.2f} | Rem: ${rem:,.2f} | Usage: {ratio*100:.1f}%")
-            self.prog_limit['value'] = min(100, ratio * 100)
+        td_str = "All"
+        if self.scale == "Year" and self.target_date: td_str = f"{self.target_date['year']}"
+        elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
+        elif self.scale == "Day" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}-{self.target_date['day']:02d}"
 
-        # Predict Budget
-        if self.scale.get() != "All":
-            scale_str, target_days = Statistic.determine_scale(exp, self.scale.get())
+        r_str = f"{self.range_filter[0]:.0f}-{'inf' if self.range_filter[1] == float('inf') else f'{self.range_filter[1]:.0f}'}"
+        
+        print("=====================================================================================")
+        print(f"[T]Time:{td_str:<12} | [C]Cat:{self.category_filter:<14} | [R]Amount Range:{r_str:<10} | [L]Limits")
+        print("=====================================================================================")
+        
+        exp_str = f"{C_EXP}Total Exp: ${t_exp:,.2f}{C_RESET}"
+        inc_str = f"{C_INC}Total Inc: ${t_inc:,.2f}{C_RESET}"
+        print(f"{exp_str:<45} | {inc_str}")
+        print("-" * 85)
+        
+        print("Real-time Limit Progress:")
+        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
+        
+        scale_str, target_days = Statistic.determine_scale(exp, self.scale)
+        
+        if self.scale == "All":
+            print(f"Limit: {C_BAR}[ N/A in 'All' Time Scale ]{C_RESET} (Switch Time filter to see specific limits)")
+        elif limit_val <= 1e-9:
+            if self.auto_suggest:
+                suggested_raw = Statistic.predict_budget(exp, target_days)
+                
+                if suggested_raw <= 1e-9:
+                    print(f"Limit: {C_PUR}[ Not Set ]{C_RESET} (Log expenses to unlock Auto-Suggested limits!)")
+                else:
+                    sug_limit = round_to_3sf(suggested_raw)
+                    sug_ratio = t_exp / sug_limit if sug_limit > 0 else 0
+                    sug_rem = max(0.0, sug_limit - t_exp)
+                    bar_len = min(20, int(sug_ratio * 20))
+                    
+                    if sug_ratio >= 1.0: color = C_EXP
+                    elif sug_ratio >= 0.75: color = C_ANO
+                    else: color = C_BAR
+                        
+                    bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
+                    
+                    print(f"Limit: {C_PUR}[ Auto-Suggested ]{C_RESET}")
+                    print(f"{color}{bar_str}{C_RESET} {sug_ratio*100:.0f}%  (${t_exp:,.2f} / ${sug_limit:,.0f})  Rem: ${sug_rem:,.2f}")
+            else:
+                print(f"Limit: {C_BAR}[ Not Set ]{C_RESET} (Press 'L' to setup limits)")
+        else:
+            bar_len = min(20, int(ratio * 20))
+            color = C_EXP if is_exc else C_BAR
+            bar_str = f"[{'█' * bar_len}{' ' * (20-bar_len)}]"
+            
+            print(f"Limit ({limit_name}):")
+            print(f"{color}{bar_str}{C_RESET} {ratio*100:.0f}%  (${t_exp:,.2f} / ${limit_val:,.2f})  Rem: ${rem:,.2f}")
+
+        print("=====================================================================================")
+        
+        if self.scale != "All":
             pred_val = Statistic.predict_budget(exp, target_days)
             if pred_val > 1e-9:
-                self.lbl_prediction.config(text=f"Predicted {scale_str} Budget: ${pred_val:,.2f}")
+                print(f"Predicted {scale_str} Budget: {C_INC}${round(pred_val):,.0f}{C_RESET}")
             else:
-                self.lbl_prediction.config(text=f"Predicted {scale_str} Budget: Awaiting more data")
+                print(f"Predicted {scale_str} Budget: {C_INC}[ Awaiting more data ]{C_RESET}")
         else:
-            self.lbl_prediction.config(text="Predicted Budget: N/A in 'All' scale.")
+            print(f"Predicted Budget: {C_BAR}[ N/A in 'All' Time Scale ]{C_RESET}")
 
-        # Records Table Refresh
-        for row in self.tree.get_children():
-            self.tree.delete(row)
+        print("-" * 85)
+        print("[Y] Details | [I] Input | [Q] Quit")
 
-        all_records = inc + exp
-        log_stats, raw_stats = Statistic.get_both_stats(all_records)
-        m_list = [r["money"] for r in all_records if r["money"] > 0]
-        max_v = max(m_list) if m_list else 0
+    def show_details(self):
+        sort_mode = "original"
+        sort_desc = False
 
-        for i, r in enumerate(all_records):
-            date_str = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
-            t_str = "Income" if r.get("is_income", False) else "Expense"
-            bar = Statistic.generate_barchart(r['money'], max_v)
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            filtered_recs = self.get_filtered_records()
+            exp = [r for r in filtered_recs if not r.get("is_income", False)]
+            inc = [r for r in filtered_recs if r.get("is_income", False)]
             
-            alarm = "Normal"
-            tag = 'income' if r.get("is_income", False) else 'expense'
+            if not exp and not inc:
+                print("\nNo records found for current filters.")
+                get_char()
+                return
+
+            if sort_mode == "time":
+                exp.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
+                inc.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
+            elif sort_mode == "money":
+                exp.sort(key=lambda x: x["money"], reverse=sort_desc)
+                inc.sort(key=lambda x: x["money"], reverse=sort_desc)
+            elif sort_mode == "alphabet":
+                exp.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
+                inc.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
+
+            all_recs = inc + exp
+            max_desc_len = max([get_visual_len(r.get("description", "")) for r in all_recs]) if all_recs else 0
+            desc_width = max(15, max_desc_len + 2) 
             
-            if not r.get("is_income", False):
-                if r.get("ignore_anomaly", False):
-                    alarm = "Ignored"
-                elif Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, ignore_flag=False):
-                    alarm = "ANOMALY"
-                    tag = 'anomaly'
+            max_cat_len = max([get_visual_len(r.get("category", "")) for r in all_recs]) if all_recs else 0
+            cat_width = max(14, max_cat_len + 2) 
+            
+            total_line_width = 61 + cat_width + desc_width
+            
+            def print_table(records, title, color, is_income=False):
+                print(f"\n>>> {color}{title}{C_RESET}")
+                if not records:
+                    print(f" (No records found)")
+                    return []
+                
+                # Retrieve both statistical baselines for the Hybrid Engine
+                log_stats, raw_stats = Statistic.get_both_stats(records)
+                
+                m_list = [r["money"] for r in records if r["money"] > 0]
+                max_v = max(m_list) if m_list else 0
+                
+                alarm_header = "" if is_income else "Alarm"
+                print("\n" + pad_text("Idx", 5) + "| " + pad_text("Date", 12) + "| " + pad_text("Category", cat_width) + "| " + pad_text("Money", 10) + "| " + pad_text("Description", desc_width) + "| " + pad_text(alarm_header, 10) + "| Bar Chart")
+                print("-" * total_line_width)
+                
+                warnings_list = []
+                for i, r in enumerate(records, start=1):
+                    date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                    try:
+                        datetime(r['year'], r['month'], r['day'])
+                    except ValueError as e:
+                        warnings_list.append(f"{C_ANO}ValueError: *[{title} Idx {i}]*, {str(e)}{C_RESET}")
 
-            self.tree.insert("", tk.END, iid=str(self.records.index(r)), values=(
-                i+1, date_str, t_str, r["category"], f"${r['money']:.2f}", r.get("description", ""), alarm, bar
-            ), tags=(tag,))
+                    if is_income:
+                        alarm = ""
+                    else:
+                        is_ano = Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, pivot=1000.0, ignore_flag=r.get("ignore_anomaly", False))
+                        if r.get("ignore_anomaly", False):
+                            alarm = f"{C_INC}Ignored{C_RESET}"
+                        else:
+                            alarm = f"{C_ANO}ANOMALY{C_RESET}" if is_ano else "Normal"
+                        
+                    bar = f"{C_BAR}{Statistic.generate_barchart(r['money'], max_v)}{C_RESET}"
+                    desc = r.get("description", "")
+                    
+                    money_fmt = f"{r['money']:.1f}"
+                    print(f"{pad_text(str(i), 5)}| {pad_text(date, 12)}| {pad_text(r['category'], cat_width)}| {pad_text(money_fmt, 10)}| {pad_text(desc, desc_width)}| {pad_text(alarm, 10)}| {bar}")
+                return warnings_list
 
-    # ================= ACTIONS =================
-    def add_manual_record(self):
-        d = self.e_date.get()
-        t = self.e_type.get()
-        c = self.e_cat.get()
-        m = self.e_money.get()
-        desc = self.e_desc.get()
-        
-        t_char = 'I' if t == "Income" else 'E'
-        raw = f"{t_char} {d} {c} {m} {desc}"
-        
-        parsed = Input.parse_staged_line(raw)
-        if parsed["valid"]:
-            self.records.append(parsed["record"])
-            self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-            self.save()
-            messagebox.showinfo("Success", "Record added securely.")
-            self.e_date.delete(0, tk.END)
-            self.e_cat.delete(0, tk.END)
-            self.e_money.delete(0, tk.END)
-            self.e_desc.delete(0, tk.END)
-            self.refresh_all()
-        else:
-            messagebox.showerror("Validation Error", parsed["error"])
+            warnings = []
+            warnings.extend(print_table(inc, "INCOME RECORDS", C_INC, is_income=True))
+            warnings.extend(print_table(exp, "EXPENSE RECORDS", C_EXP, is_income=False))
+            
+            if warnings:
+                print(f"\n{C_ANO}--- Data format Warnings ---{C_RESET}")
+                for w in warnings:
+                    print(w)
 
-    def import_file(self):
-        fpath = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
-        if fpath:
-            recs = Input.read_input(fpath, "txt")
-            if recs:
-                self.records.extend(recs)
-                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-                self.save()
-                messagebox.showinfo("Success", f"Imported {len(recs)} records.")
-                self.refresh_all()
+            if self.scale != "All":
+                scale_str, target_days = Statistic.determine_scale(exp, self.scale)
+                pred = Statistic.predict_budget(exp, target_days)
+                if pred > 1e-9:
+                    print(f"\n{C_EXP}Predicted {scale_str} Expense Budget for '{self.category_filter}': ${round(pred):,.0f}{C_RESET}")
+                else:
+                    print(f"\n{C_EXP}Predicted {scale_str} Expense Budget for '{self.category_filter}': [ Awaiting more data ]{C_RESET}")
             else:
-                messagebox.showwarning("Warning", "No valid records found in file.")
+                print(f"\n{C_BAR}Predicted Budget: [ N/A in 'All' Time Scale ]{C_RESET}")
+            
+            print("\n--- Details Options ---")
+            print("[S]ort Tables | [E]dit Record | [Q]uit to Dashboard")
+            cmd = get_char()
+            
+            if cmd == 'Q':
+                break
+            elif cmd == 'S':
+                print("\nSort by: [O]riginal, [A]lphabet(Cat), [T]ime, [M]oney")
+                s_cmd = get_char()
+                if s_cmd in ['T', 'M', 'A']:
+                    print("Order: [A]scending or [D]escending?")
+                    o_cmd = get_char()
+                    sort_desc = (o_cmd == 'D')
+                    if s_cmd == 'T': sort_mode = "time"
+                    elif s_cmd == 'M': sort_mode = "money"
+                    elif s_cmd == 'A': sort_mode = "alphabet"
+                elif s_cmd == 'O':
+                    sort_mode = "original"
+            elif cmd == 'E':
+                print("\nEdit [I]ncome or [E]xpense record? (I/E)")
+                ie_cmd = get_char()
+                
+                os.system('cls' if os.name == 'nt' else 'clear')
+                
+                if ie_cmd == 'I':
+                    target_list = inc
+                    t_name = "Income"
+                    print_table(inc, "INCOME RECORDS", C_INC, is_income=True)
+                elif ie_cmd == 'E':
+                    target_list = exp
+                    t_name = "Expense"
+                    print_table(exp, "EXPENSE RECORDS", C_EXP, is_income=False)
+                else:
+                    print("Invalid choice."); get_char(); continue
+                    
+                if not target_list:
+                    print(f"\nNo {t_name} records available to edit."); get_char(); continue
 
-    def set_time_limit(self):
-        val = self.lim_scale.get()[0] # gets 'd', 'w', 'm', 'y'
-        try:
-            amt = float(self.lim_amt.get())
-            self.lm.set_limit("time", val, amt)
-            messagebox.showinfo("Success", f"Time limit set for '{val}' to ${amt}")
-            self.refresh_all()
-        except ValueError:
-            messagebox.showerror("Error", "Invalid amount")
+                idx_str = input(f"\nEnter Index (Idx) number from the {t_name} table to edit: ").strip()
+                if idx_str.isdigit() and 1 <= int(idx_str) <= len(target_list):
+                    target_r = target_list[int(idx_str) - 1]
+                    print(f"\nEditing {t_name} Idx {idx_str}: {target_r['year']}-{target_r['month']:02d}-{target_r['day']:02d} | {target_r['category']} | ${target_r['money']}")
+                    print("What would you like to edit?")
+                    
+                    if t_name == "Expense":
+                        print("[T]ype (Flip I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [A]larm Toggle | [X]Delete | [Q]Cancel")
+                    else:
+                        print("[T]ype (Flip I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [X]Delete | [Q]Cancel")
+                        
+                    e_cmd = get_char()
+                    
+                    if e_cmd == 'T':
+                        target_r["is_income"] = not target_r["is_income"]
+                        self.save()
+                        new_type = "Income" if target_r["is_income"] else "Expense"
+                        print(f"\n{C_INC}Record successfully moved to the {new_type} table.{C_RESET}"); get_char()
+                    elif e_cmd == 'D':
+                        new_date = input("Enter new date (YYYY-MM-DD): ").strip()
+                        dp = Input.validate_date(new_date, "Edit Input")
+                        if dp:
+                            target_r["year"], target_r["month"], target_r["day"] = dp[0], dp[1], dp[2]
+                            self.save()
+                    elif e_cmd == 'C':
+                        new_cat = input("Enter new Category: ").strip()
+                        if new_cat:
+                            target_r["category"] = new_cat
+                            self.save()
+                    elif e_cmd == 'M':
+                        try:
+                            new_money = float(input("Enter new Money amount: ").strip())
+                            if new_money > 0:
+                                target_r["money"] = new_money
+                                self.save()
+                            else:
+                                print("Amount must be positive."); get_char()
+                        except ValueError:
+                            print("Invalid amount."); get_char()
+                    elif e_cmd == 'I':
+                        new_desc = input("Enter new Description: ").strip()
+                        target_r["description"] = new_desc
+                        self.save()
+                    elif e_cmd == 'A' and t_name == "Expense":
+                        target_r["ignore_anomaly"] = not target_r.get("ignore_anomaly", False)
+                        self.save()
+                    elif e_cmd == 'X':
+                        print(f"\n{C_EXP}Are you sure you want to delete this record? (Y/N){C_RESET}")
+                        conf = get_char()
+                        if conf == 'Y':
+                            self.records.remove(target_r)
+                            self.save()
+                            print(f"{C_INC}Record deleted successfully.{C_RESET}")
+                            get_char()
+                else:
+                    print("Invalid index."); get_char()
 
-    def set_cat_limit(self):
-        cat = self.lim_cat.get().strip()
-        try:
-            amt = float(self.lim_cat_amt.get())
-            if cat:
-                self.lm.set_limit("cat", cat, amt)
-                messagebox.showinfo("Success", f"Category limit set for '{cat}' to ${amt}")
-                self.refresh_all()
-        except ValueError:
-            messagebox.showerror("Error", "Invalid amount")
-
-    def delete_selected_record(self):
-        sel = self.tree.selection()
-        if not sel: return
-        idx = int(sel[0]) # IID is the actual index in self.records
-        if messagebox.askyesno("Confirm", "Delete this record?"):
-            self.records.pop(idx)
-            self.save()
-            self.refresh_all()
-
-    def toggle_anomaly(self):
-        sel = self.tree.selection()
-        if not sel: return
-        idx = int(sel[0])
-        r = self.records[idx]
-        if not r.get("is_income", False):
-            r["ignore_anomaly"] = not r.get("ignore_anomaly", False)
-            self.save()
-            self.refresh_all()
+    def _handle_time_filter(self):
+        print("\n--- Set Time Scale ---")
+        print("[D]ay, [M]onth, [Y]ear, [A]ll")
+        sub = input("Select scale (D/M/Y/A): ").strip().upper()
+        if sub == 'A':
+            self.scale = "All"
+            self.target_date = None
+        elif sub == 'Y':
+            y = input("Enter Year (YYYY): ").strip()
+            if y.isdigit():
+                self.scale = "Year"
+                self.target_date = {"year": int(y)}
+        elif sub == 'M':
+            m = input("Enter Month (YYYY-MM): ").strip()
+            parts = m.split('-')
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                self.scale = "Month"
+                self.target_date = {"year": int(parts[0]), "month": int(parts[1])}
+        elif sub == 'D':
+            d = input("Enter Day (YYYY-MM-DD): ").strip()
+            dp = Input.validate_date(d, "Filter Input")
+            if dp:
+                self.scale = "Day"
+                self.target_date = {"year": dp[0], "month": dp[1], "day": dp[2]}
         else:
-            messagebox.showinfo("Info", "Income records don't trigger anomaly checks.")
+            print("Invalid input."); get_char()
 
-    def on_close(self):
-        self.save()
-        self.destroy()
+    def _handle_category_filter(self):
+        cats = list(set(r["category"] for r in self.records))
+        print("\n--- Select Category ---")
+        print("0: All Categories")
+        for i, c in enumerate(cats, 1):
+            print(f"{i}: {c}")
+        try:
+            choice = int(input("Enter number: "))
+            if choice == 0:
+                self.category_filter = "All"
+            elif 1 <= choice <= len(cats):
+                self.category_filter = cats[choice - 1]
+        except ValueError:
+            print("Invalid selection.")
+
+    def _handle_range_filter(self):
+        print("\n--- Set Amount Range ---")
+        try:
+            l_str = input("Lower bound (default 0): ").strip()
+            lower = float(l_str) if l_str else 0.0
+            u_str = input("Upper bound (leave empty for inf): ").strip()
+            upper = float(u_str) if u_str else float('inf')
+            self.range_filter = (max(0.0, lower), upper)
+        except ValueError:
+            print("Error: Invalid numbers.")
+
+    def _handle_limit_menu(self):
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print("=====================================================================================")
+            print("                             LIMIT MANAGEMENT DASHBOARD                              ")
+            print("=====================================================================================")
+            
+            t_exp = sum(r["money"] for r in self.records if not r.get("is_income", False))
+            t_inc = sum(r["money"] for r in self.records if r.get("is_income", False))
+            print(f" {C_EXP}Lifetime Exp: ${t_exp:,.2f}{C_RESET} | {C_INC}Lifetime Inc: ${t_inc:,.2f}{C_RESET}")
+            print("-" * 85)
+            
+            print(f" >>> {C_BAR}ACTIVE TIME LIMITS{C_RESET}")
+            active_time = False
+            for k, v in self.lm.time_limits.items():
+                if v > 1e-9:
+                    scale_name = {"d":"Daily", "w":"Weekly", "m":"Monthly", "y":"Yearly"}.get(k, k)
+                    print(f"     - {scale_name}: ${v:,.2f}")
+                    active_time = True
+                    
+            if not active_time: 
+                if self.auto_suggest:
+                    exp_all = [r for r in self.records if not r.get("is_income", False)]
+                    scale_str, target_days = Statistic.determine_scale(exp_all, "All")
+                    sug_time = round_to_3sf(Statistic.predict_budget(exp_all, target_days))
+                    
+                    if sug_time > 0:
+                        print(f"     (None set) {C_PUR}>> Auto-Suggested {scale_str}: ${sug_time:,.0f}{C_RESET}")
+                    else:
+                        print(f"     (None set) {C_PUR}>> Log data to get a personalized suggestion!{C_RESET}")
+                else:
+                    print("     (None set)")
+            
+            print(f"\n >>> {C_BAR}ACTIVE CATEGORY LIMITS{C_RESET}")
+            active_cat = False
+            for k, v in self.lm.category_limits.items():
+                if v > 1e-9:
+                    print(f"     - {k}: ${v:,.2f}")
+                    active_cat = True
+            if not active_cat: print("     (None set)")
+            print("-" * 85)
+            
+            toggle_state = "ON " if self.auto_suggest else "OFF"
+            print(f"{'[T] Time Limit':<27} | {'[C] Category Limit':<27} | [R] Remove Limit")
+            print(f"{f'[1] Toggle Auto ({toggle_state})':<27} | {'[Y] View Details':<27} | ")
+            print(f"{'[Q] Return to Main Menu':<27} | {'':<27} | ")
+            
+            cmd = get_char()
+            if cmd == 'Q':
+                break
+            elif cmd == 'Y':
+                self.show_details()
+            elif cmd == '1':
+                self.auto_suggest = not self.auto_suggest
+            elif cmd == 'T':
+                print("\nScale options: [d]ay, [w]eek, [m]onth, [y]ear")
+                scale = input("Enter scale (d/w/m/y): ").strip().lower()
+                if scale in ['d', 'w', 'm', 'y']:
+                    try:
+                        amt = float(input("Enter limit amount: "))
+                        self.lm.set_limit("time", scale, amt)
+                    except ValueError:
+                        print("Error: Invalid amount."); get_char()
+            elif cmd == 'C':
+                print("\n")
+                cat = input("Enter Category Name (e.g. Food): ").strip()
+                try:
+                    amt = float(input("Enter limit amount: "))
+                    self.lm.set_limit("cat", cat, amt)
+                except ValueError:
+                    print("Error: Invalid amount."); get_char()
+            elif cmd == 'R':
+                print("\n")
+                t_c = input("Remove [T]ime or [C]ategory limit? (T/C): ").strip().upper()
+                if t_c == 'T':
+                    scale = input("Scale [d/w/m/y]: ").strip().lower()
+                    self.lm.set_limit("time", scale, 0.0)
+                elif t_c == 'C':
+                    cat = input("Category Name: ").strip()
+                    self.lm.set_limit("cat", cat, 0.0)
+
+    def _handle_input_menu(self):
+        staging_buffer = []
+        last_error = ""
+        
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print("=====================================================================================")
+            print("                             DATA INPUT STAGING AREA                              ")
+            print("=====================================================================================")
+            print(" Instructions:")
+            print(" - Manual Entry: Type your data directly using this exact format:")
+            print("                 [I/E] [YYYY-MM-DD] [CATEGORY] [MONEY] [DESCRIPTION]")
+            print("                 (e.g., E 2026-04-21 Food 45.50 Lunch)")
+            print(" - File Import:  Type 'F' followed by your filename (e.g., F test_food.txt)")
+            print(" - Edit Line:    Type 'E' to select and modify (or delete) a specific line.")
+            print(f" - Finish:       Type 'DONE' to save all entries to the database.")
+            print(f"                 ({C_INC}Income is shown in Green{C_RESET}, {C_EXP}Expenses in Red{C_RESET}).")
+            print(" - Cancel:       Type 'Q' to discard everything and return.")
+            print("-" * 85)
+            
+            print(f" {pad_text('Idx', 4)}| {pad_text('Type', 6)}| {pad_text('Date', 12)}| {pad_text('Category', 14)}| {pad_text('Money', 10)}| Description")
+            print("-" * 85)
+            
+            if not staging_buffer:
+                print(" (No data staged yet. Start typing your entries...)")
+            else:
+                for i, item in enumerate(staging_buffer, start=1):
+                    r = item["record"]
+                    t_str = "[Inc]" if r["type"] == 'I' else "[Exp]"
+                    date_str = r.get("raw_date", "")
+                    cat_str = r.get("category", "")
+                    money_str = r.get("raw_money", "")
+                    desc_str = r.get("description", "")
+                    
+                    line_str = f"{pad_text(t_str, 6)}| {pad_text(date_str, 12)}| {pad_text(cat_str, 14)}| {pad_text(money_str, 10)}| {desc_str}"
+                    
+                    color = C_INC if r["is_income"] else C_EXP
+                    print(f" {pad_text(str(i), 4)}| {color}{line_str}{C_RESET}")
+            
+            print("=====================================================================================")
+            
+            if last_error:
+                print(f" {C_PUR}>> Input Error: {last_error}{C_RESET}")
+                last_error = "" 
+                
+            if staging_buffer:
+                print(" >> Are these all the data you want to add? If yes, type 'DONE'.")
+                
+            user_input = input("> Your Input: ").strip()
+            
+            if user_input.upper() == 'Q':
+                break
+                
+            elif user_input.upper() == 'DONE':
+                if staging_buffer:
+                    for item in staging_buffer:
+                        self.records.append(item["record"])
+                    
+                    self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+                    self.save()
+                    print(f"\n[System] {C_INC}{len(staging_buffer)} valid entries were successfully appended!{C_RESET}")
+                    input("Press Enter to return to Dashboard...")
+                break
+                    
+            elif user_input.upper() == 'E':
+                idx_str = input("\n> Enter Idx number to edit: ").strip()
+                if idx_str.isdigit():
+                    idx = int(idx_str)
+                    if 1 <= idx <= len(staging_buffer):
+                        target_item = staging_buffer[idx-1]
+                        rec = target_item["record"]
+                        
+                        print(f"\nEditing [{idx}]: {target_item['raw']}")
+                        print("What would you like to edit?")
+                        print("[T]ype (I/E) | [D]ate | [C]ategory | [M]oney | [I]nfo(Description) | [X]Delete | [Q]Cancel")
+                        e_cmd = get_char()
+                        
+                        if e_cmd == 'X':
+                            staging_buffer.pop(idx-1)
+                            last_error = f"Successfully deleted record at Idx {idx} from staging area."
+                            continue
+
+                        new_type = rec["type"]
+                        new_date = rec["raw_date"]
+                        new_cat = rec["category"]
+                        new_money = rec["raw_money"]
+                        new_desc = rec["description"]
+
+                        if e_cmd == 'T':
+                            new_type = input("Enter new Type (I/E): ").strip().upper()
+                        elif e_cmd == 'D':
+                            new_date = input("Enter new date (YYYY-MM-DD): ").strip()
+                        elif e_cmd == 'C':
+                            new_cat = input("Enter new Category: ").strip()
+                        elif e_cmd == 'M':
+                            new_money = input("Enter new Money amount: ").strip()
+                        elif e_cmd == 'I':
+                            new_desc = input("Enter new Description: ").strip()
+                        
+                        if e_cmd in ['T', 'D', 'C', 'M', 'I']:
+                            new_raw = f"{new_type} {new_date} {new_cat} {new_money} {new_desc}".strip()
+                            parsed_edit = Input.parse_staged_line(new_raw)
+                            if parsed_edit["valid"]:
+                                staging_buffer[idx-1] = parsed_edit
+                            else:
+                                last_error = f"Edit failed: {parsed_edit['error']}. Line reverted."
+                    else:
+                        last_error = "Invalid index number."
+                else:
+                     last_error = "Invalid input. Please enter a number."
+                     
+            elif user_input.upper().startswith('F '):
+                file_path = user_input[2:].strip()
+                invalid_count = 0
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.strip():
+                                file_parts = line.strip().split(" ", 3)
+                                if file_parts[0].upper() not in ['I', 'E']:
+                                    parsed = Input.parse_staged_line("E " + line.strip())
+                                else:
+                                    parsed = Input.parse_staged_line(line.strip())
+                                
+                                if parsed["valid"]:
+                                    staging_buffer.append(parsed)
+                                else:
+                                    invalid_count += 1
+                    if invalid_count > 0:
+                         last_error = f"File contained {invalid_count} invalid lines. They were skipped."
+                except FileNotFoundError:
+                    last_error = f"Error: File '{file_path}' not found."
+                except Exception as e:
+                    last_error = f"File reading error: {e}"
+            elif user_input:
+                parsed = Input.parse_staged_line(user_input)
+                if parsed["valid"]:
+                    staging_buffer.append(parsed)
+                else:
+                    last_error = f"'{parsed['raw']}' -> {parsed['error']}"
+
+    def run(self):
+        try:
+            while True:
+                self.draw_dashboard()
+                cmd = get_char()
+                
+                if cmd == 'Q': 
+                    break
+                elif cmd == 'T': 
+                    self._handle_time_filter()
+                elif cmd == 'C':
+                    self._handle_category_filter()
+                elif cmd == 'R': 
+                    self._handle_range_filter()
+                elif cmd == 'L':
+                    self._handle_limit_menu()
+                elif cmd == 'Y': 
+                    self.show_details()
+                elif cmd == 'I':
+                    self._handle_input_menu()
+        except KeyboardInterrupt:
+            print("\n[System] Interrupted by user.")
+        finally:
+            self.save()
+            print("System shutting down securely...")
 
 if __name__ == "__main__":
-    app = FinanceGUI()
-    app.mainloop()
+    app = FinanceSystem()
+    app.run()

@@ -33,7 +33,7 @@ The entire system utilizes ANSI color rendering and a "One-Letter Trigger" inter
 * **Execution Environment:** Compatible with Windows, macOS, and Linux terminals.
 * **How to Run:** Open your terminal or command prompt in the project root directory and execute:
     ```bash
-    python Main.py
+    python3 Main.py
     ```
 
 ## 4. Interactive Operation Guide

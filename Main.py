@@ -111,6 +111,7 @@ class FinanceGUI(tk.Tk):
         self.cat_cb.grid(row=0, column=3, padx=5, pady=5)
         
         ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=4, padx=15)
+        ttk.Button(f_frame, text="Quit Program", command=self.on_close).grid(row=0, column=5, padx=5)
 
         # Overview Stats
         stats_frame = ttk.Frame(self.frame_dash)

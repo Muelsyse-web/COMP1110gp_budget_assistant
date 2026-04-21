@@ -6,20 +6,56 @@ EPSILON = 1e-9 # Prevent division by zero
 MAX_WIDTH = 40 # Standard width for bars
 BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] # 1/8 resolution
 
-def calculate_log_zscore(log_value, log_mean, log_std_dev):
-    """Calculate Z-score safely on log-transformed data"""
-    if log_std_dev < EPSILON:
-        return 0.0
-    return (log_value - log_mean) / log_std_dev
+def get_both_stats(records):
+    """
+    Calculates both Arithmetic (Raw) and Geometric (Log) baselines simultaneously.
+    Uses trimming to prevent the Masking Effect from massive outliers.
+    """
+    valid_money = [r["money"] for r in records if r["money"] > 0 and not r.get("ignore_anomaly", False)]
+    if not valid_money:
+        return (0.0, 0.0), (0.0, 0.0)
 
-def is_anomaly(value, log_mean, log_std_dev, ignore_flag=False):
-    """Detect outliers based on Log-Normal Z-score threshold of > 1.96 (95% CI)."""
+    # Trim top/bottom 10% to find the true behavioral core
+    sorted_money = sorted(valid_money)
+    if len(sorted_money) > 5:
+        trim_idx = max(1, int(len(sorted_money) * 0.1))
+        core_money = sorted_money[trim_idx:-trim_idx]
+    else:
+        core_money = sorted_money
+
+    # 1. Raw Normal Baseline
+    raw_mean = statistics.mean(core_money) if core_money else 0.0
+    raw_std = statistics.stdev(core_money) if len(core_money) > 1 else 0.0
+
+    # 2. Log-Normal Baseline
+    core_logs = [math.log(m) for m in core_money]
+    log_mean = statistics.mean(core_logs) if core_logs else 0.0
+    log_std = statistics.stdev(core_logs) if len(core_logs) > 1 else 0.0
+
+    return (log_mean, log_std), (raw_mean, raw_std)
+
+def is_hybrid_anomaly(value, log_stats, raw_stats, pivot=1000.0, ignore_flag=False):
+    """
+    Multi-Model Switching Logic:
+    - Values > Pivot: Log-Normal distribution (Forgives proportional changes on big bills).
+    - Values <= Pivot: Normal distribution (Catches absolute dollar spikes on daily habits).
+    """
     if ignore_flag or value <= 0:
         return False
-    
-    log_val = math.log(value)
-    z = calculate_log_zscore(log_val, log_mean, log_std_dev)
-    return abs(z) > 1.96
+
+    log_mean, log_std = log_stats
+    raw_mean, raw_std = raw_stats
+
+    # Tier 1: High-Value Logic (Log-Normal)
+    if value > pivot:
+        log_val = math.log(value)
+        z_log = (log_val - log_mean) / (log_std + EPSILON)
+        return abs(z_log) > 1.96
+
+    # Tier 2: Lifestyle Logic (Raw Normal)
+    else:
+        z_raw = (value - raw_mean) / (raw_std + EPSILON)
+        return abs(z_raw) >= 2.0
 
 def generate_barchart(money, max_money):
     """Logarithmic Scaling for UI Visuals"""
@@ -69,23 +105,18 @@ def predict_budget(records, target_days=30):
     if not expenses:
         return 0.0
 
-    money_list = [r["money"] for r in expenses if r["money"] > 0]
-    if not money_list:
-        return 0.0
-        
-    log_money = [math.log(m) for m in money_list]
-    log_mean = statistics.mean(log_money) if len(log_money) >= 1 else 0.0
-    log_std = statistics.stdev(log_money) if len(log_money) > 1 else 0.0
+    # Fetch both baselines for the hybrid cleaning phase
+    log_stats, raw_stats = get_both_stats(expenses)
 
     fixed_costs = 0.0
     variable_records = []
 
-    # Clean data: Separate anomalies/ignored into Fixed Costs
+    # Clean data: Separate hybrid anomalies/ignored into Fixed Costs
     for r in expenses:
         if r.get("ignore_anomaly", False):
             fixed_costs += r["money"]
         else:
-            if not is_anomaly(r["money"], log_mean, log_std):
+            if not is_hybrid_anomaly(r["money"], log_stats, raw_stats):
                 variable_records.append(r)
 
     if not variable_records:
@@ -122,7 +153,6 @@ def predict_budget(records, target_days=30):
             raw_momentum = second_half_avg / first_half_avg
             momentum = max(0.5, min(2.0, raw_momentum))
         elif second_half_avg > EPSILON:
-            # Architect Fix: "Zero-to-Hero" spending curve defaults to max momentum
             momentum = 2.0
 
     daily_burn = sum(r["money"] for r in variable_records) / days_span

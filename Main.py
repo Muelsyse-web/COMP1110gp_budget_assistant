@@ -29,16 +29,38 @@ class FinanceGUI(tk.Tk):
         self.sort_by = tk.StringVar(value="Time")
         self.sort_order = tk.StringVar(value="Descending")
 
-        # Style
+        # Main window background
+        self.configure(bg="#F0F4F8")
+
+        # Style (Blue-Themed Native UI)
         style = ttk.Style(self)
         style.theme_use('clam')
-        style.configure('TNotebook.Tab', padding=[10, 5], font=('Segoe UI', 10, 'bold'))
-        style.configure('Header.TLabel', font=('Segoe UI', 14, 'bold'))
-        style.configure('Treeview', rowheight=25)
         
-        # Add styles for Progressbar colors
-        style.configure("green.Horizontal.TProgressbar", background='green')
-        style.configure("red.Horizontal.TProgressbar", background='red')
+        # Base UI Elements
+        style.configure('TFrame', background="#F0F4F8")
+        style.configure('TLabelframe', background="#F0F4F8")
+        style.configure('TLabelframe.Label', background="#F0F4F8", font=('Segoe UI', 10, 'bold'), foreground="#102A43")
+        style.configure('TLabel', background="#F0F4F8", foreground="#102A43")
+        style.configure('TCheckbutton', background="#F0F4F8", foreground="#102A43")
+        style.map('TCheckbutton', background=[('active', '#F0F4F8')])
+
+        # Notebook & Tabs
+        style.configure('TNotebook', background="#F0F4F8", borderwidth=0)
+        style.configure('TNotebook.Tab', padding=[10, 5], font=('Segoe UI', 10, 'bold'), background="#DCE6F2", foreground="#102A43", borderwidth=0)
+        style.map('TNotebook.Tab', background=[('selected', '#FFFFFF')], foreground=[('selected', '#0056b3')])
+
+        # Buttons (Soft Blue Flat Design)
+        style.configure('TButton', font=('Segoe UI', 9, 'bold'), padding=6, relief="flat", background="#D3E2F2", foreground="#0A2540")
+        style.map('TButton', background=[('active', '#B9D1EA')])
+
+        # Data Table (Treeview)
+        style.configure('Treeview', rowheight=30, borderwidth=0, font=('Segoe UI', 9), background="#FFFFFF", fieldbackground="#FFFFFF", foreground="#102A43")
+        style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'), background="#C5D9ED", foreground="#0A2540", borderwidth=0, padding=5)
+        style.map('Treeview.Heading', background=[('active', '#B4CDE4')])
+
+        # Add styles for Progressbar colors (Softened Red/Green + Blue Trough)
+        style.configure("green.Horizontal.TProgressbar", background='#28a745', troughcolor="#E1EBF5", borderwidth=0)
+        style.configure("red.Horizontal.TProgressbar", background='#dc3545', troughcolor="#E1EBF5", borderwidth=0)
         
         # Main Notebook structure
         self.notebook = ttk.Notebook(self)
@@ -265,6 +287,10 @@ class FinanceGUI(tk.Tk):
         self.refresh_all()
 
     def refresh_all(self):
+        # Assign original index to prevent duplicate IID crashes with identical records
+        for idx, rec in enumerate(self.records):
+            rec['_original_idx'] = idx
+
         filtered = self.get_filtered_records()
         exp = [r for r in filtered if not r.get("is_income", False)]
         inc = [r for r in filtered if r.get("is_income", False)]
@@ -351,17 +377,17 @@ class FinanceGUI(tk.Tk):
                     alarm = "ANOMALY"
                     tag = 'anomaly'
 
-            self.tree.insert("", tk.END, iid=str(self.records.index(r)), values=(
+            self.tree.insert("", tk.END, iid=str(r['_original_idx']), values=(
                 i+1, date_str, t_str, r["category"], f"${r['money']:.2f}", r.get("description", ""), alarm, bar
             ), tags=(tag,))
 
     # ================= ACTIONS =================
     def add_manual_record(self):
-        d = self.e_date.get()
+        d = self.e_date.get().strip()
         t = self.e_type.get()
-        c = self.e_cat.get()
-        m = self.e_money.get()
-        desc = self.e_desc.get()
+        c = self.e_cat.get().strip().replace(" ", "_") or "Uncategorized"
+        m = self.e_money.get().strip()
+        desc = self.e_desc.get().strip() or "No_Description"
         
         t_char = 'I' if t == "Income" else 'E'
         raw = f"{t_char} {d} {c} {m} {desc}"
@@ -425,6 +451,7 @@ class FinanceGUI(tk.Tk):
         err_win = tk.Toplevel(self)
         err_win.title("Import Report")
         err_win.geometry("600x400")
+        err_win.configure(bg="#F0F4F8")
         err_win.grab_set()
         
         ttk.Label(err_win, text=f"Imported {valid_count} valid records.", font=('Segoe UI', 10, 'bold'), foreground="darkgreen").pack(pady=5)
@@ -460,6 +487,7 @@ class FinanceGUI(tk.Tk):
         edit_win = tk.Toplevel(self)
         edit_win.title("Edit Record")
         edit_win.geometry("350x260")
+        edit_win.configure(bg="#F0F4F8")
         edit_win.grab_set() # Block main window interactions
         
         ttk.Label(edit_win, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=10, pady=10, sticky="w")
@@ -488,7 +516,9 @@ class FinanceGUI(tk.Tk):
         e_desc.grid(row=4, column=1, padx=10, pady=10)
         
         def save_edit():
-            raw = f"{'I' if e_type.get() == 'Income' else 'E'} {e_date.get()} {e_cat.get()} {e_money.get()} {e_desc.get()}"
+            new_c = e_cat.get().strip().replace(" ", "_") or "Uncategorized"
+            new_desc = e_desc.get().strip() or "No_Description"
+            raw = f"{'I' if e_type.get() == 'Income' else 'E'} {e_date.get().strip()} {new_c} {e_money.get().strip()} {new_desc}"
             parsed = Input.parse_staged_line(raw)
             if parsed["valid"]:
                 new_rec = parsed["record"]
@@ -521,19 +551,30 @@ class FinanceGUI(tk.Tk):
     def delete_selected_record(self):
         sel = self.tree.selection()
         if not sel: return
-        idx = int(sel[0]) # IID is the actual index in self.records
-        if messagebox.askyesno("Confirm", "Delete this record?"):
-            self.records.pop(idx)
+        
+        if messagebox.askyesno("Confirm", f"Delete {len(sel)} selected record(s)?"):
+            # Delete in reverse index order to avoid array shifting issues
+            indices = sorted([int(x) for x in sel], reverse=True)
+            for idx in indices:
+                if 0 <= idx < len(self.records):
+                    self.records.pop(idx)
             self.save()
             self.refresh_all()
 
     def toggle_anomaly(self):
         sel = self.tree.selection()
         if not sel: return
-        idx = int(sel[0])
-        r = self.records[idx]
-        if not r.get("is_income", False):
-            r["ignore_anomaly"] = not r.get("ignore_anomaly", False)
+        
+        toggled_any = False
+        for s in sel:
+            idx = int(s)
+            if 0 <= idx < len(self.records):
+                r = self.records[idx]
+                if not r.get("is_income", False):
+                    r["ignore_anomaly"] = not r.get("ignore_anomaly", False)
+                    toggled_any = True
+        
+        if toggled_any:
             self.save()
             self.refresh_all()
         else:

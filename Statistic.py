@@ -16,13 +16,43 @@ def is_anomaly(value, log_mean, log_std_dev, ignore_flag=False):
     """Detect outliers based on Log-Normal Z-score threshold of > 1.96 (95% CI)."""
     if ignore_flag or value <= 0:
         return False
-    
     log_val = math.log(value)
     z = calculate_log_zscore(log_val, log_mean, log_std_dev)
     return abs(z) > 1.96
 
+def get_both_stats(records):
+    """Extracts both log-normal and raw normal distribution parameters"""
+    expenses = [r["money"] for r in records if r["money"] > 0 and not r.get("ignore_anomaly", False) and not r.get("is_income", False)]
+    if not expenses:
+        return (0.0, 0.0), (0.0, 0.0)
+    
+    log_money = [math.log(m) for m in expenses]
+    log_mean = statistics.mean(log_money) if log_money else 0.0
+    log_std = statistics.stdev(log_money) if len(log_money) > 1 else 0.0
+    
+    raw_mean = statistics.mean(expenses) if expenses else 0.0
+    raw_std = statistics.stdev(expenses) if len(expenses) > 1 else 0.0
+    
+    return (log_mean, log_std), (raw_mean, raw_std)
+
+def is_hybrid_anomaly(value, log_stats, raw_stats, pivot=1000.0, ignore_flag=False):
+    """Uses Log-Normal for small values and standard Normal for huge values"""
+    if ignore_flag or value <= 0:
+        return False
+    log_mean, log_std = log_stats
+    raw_mean, raw_std = raw_stats
+    
+    if value < pivot:
+        if log_std < EPSILON: return False
+        z = calculate_log_zscore(math.log(value), log_mean, log_std)
+    else:
+        if raw_std < EPSILON: return False
+        z = (value - raw_mean) / raw_std
+        
+    return abs(z) > 1.96
+
 def generate_barchart(money, max_money):
-    """Logarithmic Scaling for UI Visuals"""
+    """Logarithmic Scaling for UI Visuals using Block characters"""
     if max_money < EPSILON or money < EPSILON:
         return ""
     
@@ -122,7 +152,6 @@ def predict_budget(records, target_days=30):
             raw_momentum = second_half_avg / first_half_avg
             momentum = max(0.5, min(2.0, raw_momentum))
         elif second_half_avg > EPSILON:
-            # Architect Fix: "Zero-to-Hero" spending curve defaults to max momentum
             momentum = 2.0
 
     daily_burn = sum(r["money"] for r in variable_records) / days_span

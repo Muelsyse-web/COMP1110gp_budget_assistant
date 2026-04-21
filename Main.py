@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog
 import json
 import os
 import math
@@ -18,7 +18,6 @@ class FinanceGUI(tk.Tk):
         # State Data
         self.records = Input.read_input("data.json", "json")
         self.lm = LimitManager()
-        self.scale = tk.StringVar(value="All")
         self.target_date_str = tk.StringVar(value="")
         self.category_filter = tk.StringVar(value="All")
         self.range_min = tk.DoubleVar(value=0.0)
@@ -61,26 +60,33 @@ class FinanceGUI(tk.Tk):
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(self.records, f, indent=4)
 
+    def get_current_scale(self):
+        """Auto-detects the scale based strictly on the Date input structure"""
+        t_date = self.target_date_str.get().strip()
+        if not t_date: 
+            return "All", None
+        
+        parts = t_date.split('-')
+        try:
+            if len(parts) == 1 and parts[0].isdigit():
+                return "Year", {"year": int(parts[0])}
+            elif len(parts) == 2 and all(p.isdigit() for p in parts):
+                return "Month", {"year": int(parts[0]), "month": int(parts[1])}
+            elif len(parts) == 3 and all(p.isdigit() for p in parts):
+                return "Day", {"year": int(parts[0]), "month": int(parts[1]), "day": int(parts[2])}
+        except ValueError:
+            pass
+        return "All", None
+
     def get_filtered_records(self):
         filtered = []
-        c_scale = self.scale.get()
-        t_date = self.target_date_str.get().strip()
+        c_scale, target_dict = self.get_current_scale()
         c_cat = self.category_filter.get()
         rmin = self.range_min.get()
         rmax = self.range_max.get() if self.range_max.get() > 0 else float('inf')
 
-        target_dict = None
-        if t_date:
-            parts = t_date.split('-')
-            if c_scale == "Year" and len(parts) >= 1:
-                target_dict = {"year": int(parts[0])}
-            elif c_scale == "Month" and len(parts) >= 2:
-                target_dict = {"year": int(parts[0]), "month": int(parts[1])}
-            elif c_scale == "Day" and len(parts) >= 3:
-                target_dict = {"year": int(parts[0]), "month": int(parts[1]), "day": int(parts[2])}
-
         for r in self.records:
-            if c_scale != "All" and target_dict:
+            if target_dict:
                 if "year" in target_dict and r["year"] != target_dict["year"]: continue
                 if "month" in target_dict and r["month"] != target_dict["month"]: continue
                 if "day" in target_dict and r["day"] != target_dict["day"]: continue
@@ -97,18 +103,14 @@ class FinanceGUI(tk.Tk):
         f_frame = ttk.LabelFrame(self.frame_dash, text="Global Filters", padding=10)
         f_frame.pack(fill=tk.X, pady=(0, 15))
 
-        ttk.Label(f_frame, text="Time Scale:").grid(row=0, column=0, padx=5, pady=5)
-        scale_cb = ttk.Combobox(f_frame, textvariable=self.scale, values=["All", "Year", "Month", "Day"], state="readonly", width=10)
-        scale_cb.grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(f_frame, text="Target Date (YYYY / YYYY-MM / YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Entry(f_frame, textvariable=self.target_date_str, width=20).grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(f_frame, text="Target Date:").grid(row=0, column=2, padx=5, pady=5)
-        ttk.Entry(f_frame, textvariable=self.target_date_str, width=15).grid(row=0, column=3, padx=5, pady=5)
-        
-        ttk.Label(f_frame, text="Category:").grid(row=0, column=4, padx=5, pady=5)
+        ttk.Label(f_frame, text="Category:").grid(row=0, column=2, padx=5, pady=5)
         self.cat_cb = ttk.Combobox(f_frame, textvariable=self.category_filter, values=["All"], state="readonly", width=15)
-        self.cat_cb.grid(row=0, column=5, padx=5, pady=5)
+        self.cat_cb.grid(row=0, column=3, padx=5, pady=5)
         
-        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=6, padx=15)
+        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=4, padx=15)
 
         # Overview Stats
         stats_frame = ttk.Frame(self.frame_dash)
@@ -139,6 +141,7 @@ class FinanceGUI(tk.Tk):
     def build_records(self):
         ctrl_frame = ttk.Frame(self.frame_records)
         ctrl_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(ctrl_frame, text="Edit Selected", command=self.edit_selected_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(ctrl_frame, text="Delete Selected", command=self.delete_selected_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(ctrl_frame, text="Toggle Anomaly Ignore", command=self.toggle_anomaly).pack(side=tk.LEFT, padx=5)
         
@@ -150,7 +153,7 @@ class FinanceGUI(tk.Tk):
         self.tree.heading("Money", text="Money")
         self.tree.heading("Desc", text="Description")
         self.tree.heading("Alarm", text="Alarm Status")
-        self.tree.heading("Bar", text="Log Bar Chart")
+        self.tree.heading("Bar", text="Relative Bar Chart")
         
         self.tree.column("Idx", width=40, anchor="center")
         self.tree.column("Date", width=100, anchor="center")
@@ -254,14 +257,15 @@ class FinanceGUI(tk.Tk):
         self.lbl_exp.config(text=f"Total Expenses: ${t_exp:,.2f}")
         self.lbl_inc.config(text=f"Total Income: ${t_inc:,.2f}")
 
-        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale.get(), self.category_filter.get())
+        c_scale, _ = self.get_current_scale()
+        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, c_scale, self.category_filter.get())
         
-        if self.scale.get() == "All" and limit_val <= 1e-9:
-            self.lbl_limit_info.config(text="Limit: N/A in 'All' Time Scale. Switch Time Filter to view limits.")
+        if c_scale == "All" and limit_val <= 1e-9:
+            self.lbl_limit_info.config(text="Limit: N/A in 'All' Time Scale. Enter a Date to view limits.")
             self.prog_limit['value'] = 0
         elif limit_val <= 1e-9:
             if self.auto_suggest.get():
-                scale_str, target_days = Statistic.determine_scale(exp, self.scale.get())
+                scale_str, target_days = Statistic.determine_scale(exp, c_scale)
                 sug_limit = Statistic.predict_budget(exp, target_days)
                 if sug_limit > 1e-9:
                     r = t_exp / sug_limit
@@ -278,8 +282,8 @@ class FinanceGUI(tk.Tk):
             self.prog_limit['value'] = min(100, ratio * 100)
 
         # Predict Budget
-        if self.scale.get() != "All":
-            scale_str, target_days = Statistic.determine_scale(exp, self.scale.get())
+        if c_scale != "All":
+            scale_str, target_days = Statistic.determine_scale(exp, c_scale)
             pred_val = Statistic.predict_budget(exp, target_days)
             if pred_val > 1e-9:
                 self.lbl_prediction.config(text=f"Predicted {scale_str} Budget: ${pred_val:,.2f}")
@@ -353,6 +357,65 @@ class FinanceGUI(tk.Tk):
                 self.refresh_all()
             else:
                 messagebox.showwarning("Warning", "No valid records found in file.")
+
+    def edit_selected_record(self):
+        sel = self.tree.selection()
+        if not sel: 
+            messagebox.showwarning("Warning", "Please select a record to edit first.")
+            return
+            
+        idx = int(sel[0]) # IID tracks the global index in self.records
+        r = self.records[idx]
+        
+        edit_win = tk.Toplevel(self)
+        edit_win.title("Edit Record")
+        edit_win.geometry("350x260")
+        edit_win.grab_set() # Block main window interactions
+        
+        ttk.Label(edit_win, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        e_date = ttk.Entry(edit_win)
+        e_date.insert(0, f"{r['year']}-{r['month']:02d}-{r['day']:02d}")
+        e_date.grid(row=0, column=1, padx=10, pady=10)
+        
+        ttk.Label(edit_win, text="Type:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        e_type = ttk.Combobox(edit_win, values=["Expense", "Income"], state="readonly")
+        e_type.set("Income" if r.get("is_income") else "Expense")
+        e_type.grid(row=1, column=1, padx=10, pady=10)
+        
+        ttk.Label(edit_win, text="Category:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        e_cat = ttk.Entry(edit_win)
+        e_cat.insert(0, r["category"])
+        e_cat.grid(row=2, column=1, padx=10, pady=10)
+        
+        ttk.Label(edit_win, text="Money:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        e_money = ttk.Entry(edit_win)
+        e_money.insert(0, str(r["money"]))
+        e_money.grid(row=3, column=1, padx=10, pady=10)
+        
+        ttk.Label(edit_win, text="Description:").grid(row=4, column=0, padx=10, pady=10, sticky="w")
+        e_desc = ttk.Entry(edit_win)
+        e_desc.insert(0, r.get("description", ""))
+        e_desc.grid(row=4, column=1, padx=10, pady=10)
+        
+        def save_edit():
+            raw = f"{'I' if e_type.get() == 'Income' else 'E'} {e_date.get()} {e_cat.get()} {e_money.get()} {e_desc.get()}"
+            parsed = Input.parse_staged_line(raw)
+            if parsed["valid"]:
+                new_rec = parsed["record"]
+                # Retain the anomaly bypass status if it remained an expense
+                if not new_rec["is_income"]:
+                    new_rec["ignore_anomaly"] = r.get("ignore_anomaly", False)
+                
+                self.records[idx] = new_rec
+                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+                self.save()
+                self.refresh_all()
+                edit_win.destroy()
+                messagebox.showinfo("Success", "Record updated successfully.")
+            else:
+                messagebox.showerror("Error", parsed["error"])
+                
+        ttk.Button(edit_win, text="Save Changes", command=save_edit).grid(row=5, column=0, columnspan=2, pady=15)
 
     def set_time_limit(self):
         val = self.lim_scale.get()[0] # gets 'd', 'w', 'm', 'y'

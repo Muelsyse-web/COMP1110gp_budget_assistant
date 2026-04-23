@@ -924,7 +924,8 @@ class FinanceSystemGUI:
         x_offset = card_w + 15
         create_round_rectangle(self.card_canvas, x_offset, 0, x_offset+card_w, 120, radius=12, fill=C_PANEL, outline="")
         
-        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter if self.category_filter != "All" else "All")
+        current_cat_limit = list(self.active_categories)[0] if len(self.active_categories) == 1 else "All"
+        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, current_cat_limit)
         scale_str, target_days = Statistic.determine_scale(exp, self.scale)
         
         title_str = f"LIMIT PROGRESS ({limit_name})" if limit_val > 0 else "LIMIT PROGRESS"

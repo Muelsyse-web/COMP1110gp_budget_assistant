@@ -1,589 +1,809 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-import json
 import os
+import json
 import math
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
-from Limit import LimitManager
+
 import Input
+import Limit
 import Statistic
 
-class FinanceGUI(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Budget Assistant GUI (Tkinter)")
-        self.geometry("1000x750")
-        self.configure(padx=10, pady=10)
+# --- MODERN WEB-INSPIRED THEME ---
+C_BG = '#0f172a'       # Deep Slate Background
+C_PANEL = '#1e293b'    # Card/Panel Background
+C_FG = '#f8fafc'       # Main Text
+C_MUTED = '#94a3b8'    # Muted/Subtext
+C_INC = '#10b981'      # Emerald Green
+C_EXP = '#ef4444'      # Rose Red
+C_ANO = '#f59e0b'      # Amber (Anomaly)
+C_BAR = '#3b82f6'      # Blue (Charts/Bars)
+C_PUR = '#8b5cf6'      # Purple (Predictions)
+C_HEAD = '#0f172a'     # Table Header
+
+def create_round_rectangle(canvas, x1, y1, x2, y2, radius=15, **kwargs):
+    """Custom algorithm to draw smooth rounded rectangles in standard Tkinter."""
+    points = [x1+radius, y1, x1+radius, y1, x2-radius, y1, x2-radius, y1, x2, y1, x2, y1+radius, x2, y1+radius, x2, y2-radius, x2, y2-radius, x2, y2, x2-radius, y2, x2-radius, y2, x1+radius, y2, x1+radius, y2, x1, y2, x1, y2-radius, x1, y2-radius, x1, y1+radius, x1, y1+radius, x1, y1]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+class RangeSliderDialog(tk.Toplevel):
+    def __init__(self, parent, current_min, current_max, absolute_max):
+        super().__init__(parent)
+        self.title("Set Amount Range")
+        self.geometry("450x220")
+        self.configure(bg=C_PANEL)
+        self.transient(parent)
+        self.grab_set()
+        self.result = None
+        self.abs_max = max(100.0, absolute_max)
         
-        # State Data
-        self.records = Input.read_input("data.json", "json")
-        self.lm = LimitManager()
-        self.target_date_str = tk.StringVar(value="")
-        self.category_filter = tk.StringVar(value="All")
+        tk.Label(self, text="Adjust Amount Range", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 12, "bold")).pack(pady=10)
+        frame = tk.Frame(self, bg=C_PANEL)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
-        # Changed to StringVar to handle empty inputs gracefully
-        self.range_min = tk.StringVar(value="")
-        self.range_max = tk.StringVar(value="") 
+        # Min Controls
+        tk.Label(frame, text="Minimum:", bg=C_PANEL, fg=C_FG).grid(row=0, column=0, sticky='w')
+        self.var_min = tk.DoubleVar(value=current_min)
+        self.scl_min = ttk.Scale(frame, from_=0, to=self.abs_max, variable=self.var_min, command=self._on_slider_min)
+        self.scl_min.grid(row=0, column=1, sticky='ew', padx=10, pady=10)
         
-        self.auto_suggest = tk.BooleanVar(value=True)
-        self.sort_by = tk.StringVar(value="Time")
-        self.sort_order = tk.StringVar(value="Descending")
-
-        # Main window background
-        self.configure(bg="#F0F4F8")
-
-        # Style (Blue-Themed Native UI)
-        style = ttk.Style(self)
-        style.theme_use('clam')
+        self.var_min_str = tk.StringVar(value=f"{current_min:.0f}")
+        self.entry_min = tk.Entry(frame, textvariable=self.var_min_str, width=10, bg=C_HEAD, fg=C_FG, insertbackground=C_FG, justify='center')
+        self.entry_min.grid(row=0, column=2)
+        self.entry_min.bind('<KeyRelease>', self._on_entry_min)
         
-        # Base UI Elements
-        style.configure('TFrame', background="#F0F4F8")
-        style.configure('TLabelframe', background="#F0F4F8")
-        style.configure('TLabelframe.Label', background="#F0F4F8", font=('Segoe UI', 10, 'bold'), foreground="#102A43")
-        style.configure('TLabel', background="#F0F4F8", foreground="#102A43")
-        style.configure('TCheckbutton', background="#F0F4F8", foreground="#102A43")
-        style.map('TCheckbutton', background=[('active', '#F0F4F8')])
-
-        # Notebook & Tabs
-        style.configure('TNotebook', background="#F0F4F8", borderwidth=0)
-        style.configure('TNotebook.Tab', padding=[10, 5], font=('Segoe UI', 10, 'bold'), background="#DCE6F2", foreground="#102A43", borderwidth=0)
-        style.map('TNotebook.Tab', background=[('selected', '#FFFFFF')], foreground=[('selected', '#0056b3')])
-
-        # Buttons (Soft Blue Flat Design)
-        style.configure('TButton', font=('Segoe UI', 9, 'bold'), padding=6, relief="flat", background="#D3E2F2", foreground="#0A2540")
-        style.map('TButton', background=[('active', '#B9D1EA')])
-
-        # Data Table (Treeview)
-        style.configure('Treeview', rowheight=30, borderwidth=0, font=('Segoe UI', 9), background="#FFFFFF", fieldbackground="#FFFFFF", foreground="#102A43")
-        style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'), background="#C5D9ED", foreground="#0A2540", borderwidth=0, padding=5)
-        style.map('Treeview.Heading', background=[('active', '#B4CDE4')])
-
-        # Add styles for Progressbar colors (Softened Red/Green + Blue Trough)
-        style.configure("green.Horizontal.TProgressbar", background='#28a745', troughcolor="#E1EBF5", borderwidth=0)
-        style.configure("red.Horizontal.TProgressbar", background='#dc3545', troughcolor="#E1EBF5", borderwidth=0)
+        # Max Controls
+        cur_max_val = self.abs_max if current_max == float('inf') else current_max
+        tk.Label(frame, text="Maximum:", bg=C_PANEL, fg=C_FG).grid(row=1, column=0, sticky='w')
+        self.var_max = tk.DoubleVar(value=cur_max_val)
+        self.scl_max = ttk.Scale(frame, from_=0, to=self.abs_max, variable=self.var_max, command=self._on_slider_max)
+        self.scl_max.grid(row=1, column=1, sticky='ew', padx=10, pady=10)
         
-        # Main Notebook structure
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Setup Tabs
-        self.frame_dash = ttk.Frame(self.notebook, padding=10)
-        self.frame_records = ttk.Frame(self.notebook, padding=10)
-        self.frame_input = ttk.Frame(self.notebook, padding=10)
-        self.frame_limits = ttk.Frame(self.notebook, padding=10)
-
-        self.notebook.add(self.frame_dash, text="Dashboard")
-        self.notebook.add(self.frame_records, text="Records & Details")
-        self.notebook.add(self.frame_input, text="Input Data")
-        self.notebook.add(self.frame_limits, text="Limits Config")
-
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
-
-        self.build_dashboard()
-        self.build_records()
-        self.build_input()
-        self.build_limits()
+        self.var_max_str = tk.StringVar(value="INF" if current_max == float('inf') else f"{current_max:.0f}")
+        self.entry_max = tk.Entry(frame, textvariable=self.var_max_str, width=10, bg=C_HEAD, fg=C_FG, insertbackground=C_FG, justify='center')
+        self.entry_max.grid(row=1, column=2)
+        self.entry_max.bind('<KeyRelease>', self._on_entry_max)
         
-        # Intercept window close
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        frame.columnconfigure(1, weight=1)
+        btn_frame = tk.Frame(self, bg=C_PANEL)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Save", command=self._save, bg=C_INC, fg='#fff', relief=tk.FLAT, width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Set Max to INF", command=self._set_inf, bg=C_BAR, fg='#fff', relief=tk.FLAT, width=15).pack(side=tk.LEFT, padx=10)
 
-    def save(self):
-        with open("data.json", "w", encoding="utf-8") as f:
-            json.dump(self.records, f, indent=4)
+    def _on_slider_min(self, *args):
+        v = self.var_min.get()
+        if v > self.var_max.get() and self.var_max_str.get() != "INF":
+            self.var_max.set(v)
+            self.var_max_str.set(f"{v:.0f}")
+        self.var_min_str.set(f"{v:.0f}")
 
-    def get_current_scale(self):
-        """Auto-detects the scale based strictly on the Date input structure"""
-        t_date = self.target_date_str.get().strip()
-        if not t_date: 
-            return "All", None
-        
-        parts = t_date.split('-')
+    def _on_slider_max(self, *args):
+        v = self.var_max.get()
+        if v < self.var_min.get():
+            self.var_min.set(v)
+            self.var_min_str.set(f"{v:.0f}")
+        if self.var_max_str.get() != "INF":
+            self.var_max_str.set(f"{v:.0f}")
+
+    def _on_entry_min(self, event):
         try:
-            if len(parts) == 1 and parts[0].isdigit():
-                return "Year", {"year": int(parts[0])}
-            elif len(parts) == 2 and all(p.isdigit() for p in parts):
-                return "Month", {"year": int(parts[0]), "month": int(parts[1])}
-            elif len(parts) == 3 and all(p.isdigit() for p in parts):
-                return "Day", {"year": int(parts[0]), "month": int(parts[1]), "day": int(parts[2])}
-        except ValueError:
-            pass
-        return "All", None
+            val = float(self.var_min_str.get())
+            if 0 <= val <= self.abs_max:
+                self.var_min.set(val)
+                if val > self.var_max.get() and self.var_max_str.get() != "INF":
+                    self.var_max.set(val)
+                    self.var_max_str.set(f"{val:.0f}")
+        except ValueError: pass
 
-    def get_filtered_records(self):
-        filtered = []
-        c_scale, target_dict = self.get_current_scale()
-        c_cat = self.category_filter.get()
-        
-        # Safe parsing for money range
+    def _on_entry_max(self, event):
+        if self.var_max_str.get().upper() == "INF": return
         try:
-            rmin = float(self.range_min.get().strip()) if self.range_min.get().strip() else 0.0
-        except ValueError:
-            rmin = 0.0
-            
-        try:
-            rmax = float(self.range_max.get().strip()) if self.range_max.get().strip() else float('inf')
-        except ValueError:
-            rmax = float('inf')
+            val = float(self.var_max_str.get())
+            if 0 <= val <= self.abs_max:
+                self.var_max.set(val)
+                if val < self.var_min.get():
+                    self.var_min.set(val)
+                    self.var_min_str.set(f"{val:.0f}")
+        except ValueError: pass
 
-        for r in self.records:
-            if target_dict:
-                if "year" in target_dict and r["year"] != target_dict["year"]: continue
-                if "month" in target_dict and r["month"] != target_dict["month"]: continue
-                if "day" in target_dict and r["day"] != target_dict["day"]: continue
-            
-            if c_cat != "All" and r["category"] != c_cat: continue
-            if not (rmin <= r["money"] <= rmax): continue
-                
-            filtered.append(r)
-        return filtered
-
-    # ================= UI BUILDERS =================
-    def build_dashboard(self):
-        # Filters Header
-        f_frame = ttk.LabelFrame(self.frame_dash, text="Global Filters", padding=10)
-        f_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(f_frame, text="Target Date (YYYY / YYYY-MM / YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
-        ttk.Entry(f_frame, textvariable=self.target_date_str, width=15).grid(row=0, column=1, padx=5, pady=5)
-        
-        ttk.Label(f_frame, text="Category:").grid(row=0, column=2, padx=5, pady=5)
-        self.cat_cb = ttk.Combobox(f_frame, textvariable=self.category_filter, values=["All"], state="readonly", width=12)
-        self.cat_cb.grid(row=0, column=3, padx=5, pady=5)
-        
-        ttk.Label(f_frame, text="Amount:").grid(row=0, column=4, padx=5, pady=5)
-        ttk.Entry(f_frame, textvariable=self.range_min, width=8).grid(row=0, column=5, padx=2)
-        ttk.Label(f_frame, text="-").grid(row=0, column=6)
-        ttk.Entry(f_frame, textvariable=self.range_max, width=8).grid(row=0, column=7, padx=2)
-        
-        ttk.Button(f_frame, text="Apply Filters", command=self.refresh_all).grid(row=0, column=8, padx=15)
-        ttk.Button(f_frame, text="Quit Program", command=self.on_close).grid(row=0, column=9, padx=5)
-
-        # Overview Stats
-        stats_frame = ttk.Frame(self.frame_dash)
-        stats_frame.pack(fill=tk.X, pady=10)
-        
-        self.lbl_exp = ttk.Label(stats_frame, text="Total Expenses: $0.00", font=('Segoe UI', 16, 'bold'), foreground="darkred")
-        self.lbl_exp.pack(side=tk.LEFT, padx=20)
-        
-        self.lbl_inc = ttk.Label(stats_frame, text="Total Income: $0.00", font=('Segoe UI', 16, 'bold'), foreground="darkgreen")
-        self.lbl_inc.pack(side=tk.LEFT, padx=20)
-
-        # Limits Display
-        limit_frame = ttk.LabelFrame(self.frame_dash, text="Real-Time Limit Progress", padding=10)
-        limit_frame.pack(fill=tk.X, pady=10)
-        
-        self.lbl_limit_info = ttk.Label(limit_frame, text="", font=('Segoe UI', 10))
-        self.lbl_limit_info.pack(anchor="w")
-        
-        self.prog_limit = ttk.Progressbar(limit_frame, orient="horizontal", length=400, mode="determinate")
-        self.prog_limit.pack(fill=tk.X, pady=5)
-
-        # Predictions
-        pred_frame = ttk.LabelFrame(self.frame_dash, text="Statistical Engine", padding=10)
-        pred_frame.pack(fill=tk.X, pady=10)
-        self.lbl_prediction = ttk.Label(pred_frame, text="Predicted Budget: N/A", font=('Segoe UI', 12))
-        self.lbl_prediction.pack(anchor="w")
-
-    def build_records(self):
-        ctrl_frame = ttk.Frame(self.frame_records)
-        ctrl_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(ctrl_frame, text="Sort By:").pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Combobox(ctrl_frame, textvariable=self.sort_by, values=["Time", "Money", "Category"], state="readonly", width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Label(ctrl_frame, text="Order:").pack(side=tk.LEFT, padx=(5, 5))
-        ttk.Combobox(ctrl_frame, textvariable=self.sort_order, values=["Ascending", "Descending"], state="readonly", width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(ctrl_frame, text="Apply Sort", command=self.refresh_all).pack(side=tk.LEFT, padx=(5, 20))
-
-        ttk.Button(ctrl_frame, text="Edit Selected", command=self.edit_selected_record).pack(side=tk.LEFT, padx=5)
-        ttk.Button(ctrl_frame, text="Delete Selected", command=self.delete_selected_record).pack(side=tk.LEFT, padx=5)
-        ttk.Button(ctrl_frame, text="Toggle Anomaly Ignore", command=self.toggle_anomaly).pack(side=tk.LEFT, padx=5)
-        
-        self.tree = ttk.Treeview(self.frame_records, columns=("Idx", "Date", "Type", "Cat", "Money", "Desc", "Alarm", "Bar"), show='headings')
-        self.tree.heading("Idx", text="Idx")
-        self.tree.heading("Date", text="Date")
-        self.tree.heading("Type", text="Type")
-        self.tree.heading("Cat", text="Category")
-        self.tree.heading("Money", text="Money")
-        self.tree.heading("Desc", text="Description")
-        self.tree.heading("Alarm", text="Alarm Status")
-        self.tree.heading("Bar", text="Relative Bar Chart")
-        
-        self.tree.column("Idx", width=40, anchor="center")
-        self.tree.column("Date", width=100, anchor="center")
-        self.tree.column("Type", width=70, anchor="center")
-        self.tree.column("Cat", width=120)
-        self.tree.column("Money", width=100, anchor="e")
-        self.tree.column("Desc", width=200)
-        self.tree.column("Alarm", width=100, anchor="center")
-        self.tree.column("Bar", width=250)
-
-        # Tags for colors
-        self.tree.tag_configure('income', foreground='darkgreen')
-        self.tree.tag_configure('expense', foreground='black')
-        self.tree.tag_configure('anomaly', foreground='red', font=('Segoe UI', 9, 'bold'))
-
-        vsb = ttk.Scrollbar(self.frame_records, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def build_input(self):
-        f1 = ttk.LabelFrame(self.frame_input, text="Manual Entry", padding=15)
-        f1.pack(fill=tk.X, pady=10)
-        
-        tk.Label(f1, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
-        self.e_date = ttk.Entry(f1)
-        self.e_date.grid(row=0, column=1, padx=5, pady=5)
-        
-        tk.Label(f1, text="Type:").grid(row=0, column=2, padx=5, pady=5)
-        self.e_type = ttk.Combobox(f1, values=["Expense", "Income"], state="readonly", width=10)
-        self.e_type.set("Expense")
-        self.e_type.grid(row=0, column=3, padx=5, pady=5)
-        
-        tk.Label(f1, text="Category:").grid(row=1, column=0, padx=5, pady=5)
-        self.e_cat = ttk.Entry(f1)
-        self.e_cat.grid(row=1, column=1, padx=5, pady=5)
-        
-        tk.Label(f1, text="Money:").grid(row=1, column=2, padx=5, pady=5)
-        self.e_money = ttk.Entry(f1)
-        self.e_money.grid(row=1, column=3, padx=5, pady=5)
-        
-        tk.Label(f1, text="Desc:").grid(row=2, column=0, padx=5, pady=5)
-        self.e_desc = ttk.Entry(f1, width=35)
-        self.e_desc.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky="w")
-        
-        ttk.Button(f1, text="Add Record", command=self.add_manual_record).grid(row=3, column=0, columnspan=4, pady=10)
-
-        f2 = ttk.LabelFrame(self.frame_input, text="Batch Import", padding=15)
-        f2.pack(fill=tk.X, pady=10)
-        ttk.Button(f2, text="Select .txt File", command=self.import_file).pack()
-
-    def build_limits(self):
-        f = ttk.LabelFrame(self.frame_limits, text="Set Combined Limit (Time & Category)", padding=10)
-        f.pack(fill=tk.X, pady=10)
-        
-        tk.Label(f, text="Scale:").grid(row=0, column=0, padx=5)
-        self.lim_scale = ttk.Combobox(f, values=["d (Daily)", "w (Weekly)", "m (Monthly)", "y (Yearly)", "all (All Time)"], state="readonly", width=12)
-        self.lim_scale.set("m (Monthly)")
-        self.lim_scale.grid(row=0, column=1, padx=5)
-        
-        tk.Label(f, text="Category:").grid(row=0, column=2, padx=5)
-        self.lim_cat = ttk.Entry(f, width=15)
-        self.lim_cat.insert(0, "All")
-        self.lim_cat.grid(row=0, column=3, padx=5)
-        
-        tk.Label(f, text="Amount:").grid(row=0, column=4, padx=5)
-        self.lim_amt = ttk.Entry(f, width=15)
-        self.lim_amt.grid(row=0, column=5, padx=5)
-        
-        ttk.Button(f, text="Set Limit", command=self.set_combined_limit).grid(row=0, column=6, padx=10)
-
-        a = ttk.Frame(self.frame_limits, padding=10)
-        a.pack(fill=tk.X)
-        ttk.Checkbutton(a, text="Enable Auto-Suggested Limits (Machine Learning)", variable=self.auto_suggest, command=self.refresh_all).pack(anchor="w")
-
-    # ================= LOGIC & REFRESH =================
-    def on_tab_change(self, event):
-        self.refresh_all()
-
-    def refresh_all(self):
-        # Assign original index to prevent duplicate IID crashes with identical records
-        for idx, rec in enumerate(self.records):
-            rec['_original_idx'] = idx
-
-        filtered = self.get_filtered_records()
-        exp = [r for r in filtered if not r.get("is_income", False)]
-        inc = [r for r in filtered if r.get("is_income", False)]
-        
-        t_exp = sum(r["money"] for r in exp)
-        t_inc = sum(r["money"] for r in inc)
-
-        # Update categories list in combobox
-        cats = ["All"] + sorted(list(set(r["category"] for r in self.records)))
-        self.cat_cb['values'] = cats
-
-        # Dashboard refresh
-        self.lbl_exp.config(text=f"Total Expenses: ${t_exp:,.2f}")
-        self.lbl_inc.config(text=f"Total Income: ${t_inc:,.2f}")
-
-        c_scale, _ = self.get_current_scale()
-        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, c_scale, self.category_filter.get())
-        
-        if c_scale == "All" and limit_val <= 1e-9:
-            self.lbl_limit_info.config(text="Limit: N/A in 'All' Time Scale. Enter a Date to view limits.")
-            self.prog_limit['value'] = 0
-        elif limit_val <= 1e-9:
-            if self.auto_suggest.get():
-                scale_str, target_days = Statistic.determine_scale(exp, c_scale)
-                sug_limit = Statistic.predict_budget(exp, target_days)
-                if sug_limit > 1e-9:
-                    r = t_exp / sug_limit
-                    self.lbl_limit_info.config(text=f"Auto-Suggested Limit ({scale_str}): ${sug_limit:,.2f} | Usage: {r*100:.1f}%")
-                    self.prog_limit['value'] = min(100, r * 100)
-                    self.prog_limit.configure(style="red.Horizontal.TProgressbar" if r >= 1.0 else "green.Horizontal.TProgressbar")
-                else:
-                    self.lbl_limit_info.config(text="Auto-Suggest: Need more data to predict limit.")
-                    self.prog_limit['value'] = 0
-            else:
-                self.lbl_limit_info.config(text="Limit: Not Set")
-                self.prog_limit['value'] = 0
-        else:
-            self.lbl_limit_info.config(text=f"Limit ({limit_name}): ${limit_val:,.2f} | Rem: ${rem:,.2f} | Usage: {ratio*100:.1f}%")
-            self.prog_limit['value'] = min(100, ratio * 100)
-            self.prog_limit.configure(style="red.Horizontal.TProgressbar" if ratio >= 1.0 else "green.Horizontal.TProgressbar")
-
-        # Predict Budget
-        if c_scale != "All":
-            scale_str, target_days = Statistic.determine_scale(exp, c_scale)
-            pred_val = Statistic.predict_budget(exp, target_days)
-            if pred_val > 1e-9:
-                self.lbl_prediction.config(text=f"Predicted {scale_str} Budget: ${pred_val:,.2f}")
-            else:
-                self.lbl_prediction.config(text=f"Predicted {scale_str} Budget: Awaiting more data")
-        else:
-            self.lbl_prediction.config(text="Predicted Budget: N/A in 'All' scale.")
-
-        # Records Table Refresh
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-
-        all_records = inc + exp
-        
-        # Apply Sorting Logic
-        sort_desc = (self.sort_order.get() == "Descending")
-        if self.sort_by.get() == "Time":
-            all_records.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=sort_desc)
-        elif self.sort_by.get() == "Money":
-            all_records.sort(key=lambda x: x["money"], reverse=sort_desc)
-        elif self.sort_by.get() == "Category":
-            all_records.sort(key=lambda x: x["category"].lower(), reverse=sort_desc)
-
-        log_stats, raw_stats = Statistic.get_both_stats(all_records)
-        m_list = [r["money"] for r in all_records if r["money"] > 0]
-        max_v = max(m_list) if m_list else 0
-
-        for i, r in enumerate(all_records):
-            date_str = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
-            t_str = "Income" if r.get("is_income", False) else "Expense"
-            bar = Statistic.generate_barchart(r['money'], max_v)
-            
-            alarm = "Normal"
-            tag = 'income' if r.get("is_income", False) else 'expense'
-            
-            if not r.get("is_income", False):
-                if r.get("ignore_anomaly", False):
-                    alarm = "Ignored"
-                elif Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, ignore_flag=False):
-                    alarm = "ANOMALY"
-                    tag = 'anomaly'
-
-            self.tree.insert("", tk.END, iid=str(r['_original_idx']), values=(
-                i+1, date_str, t_str, r["category"], f"${r['money']:.2f}", r.get("description", ""), alarm, bar
-            ), tags=(tag,))
-
-    # ================= ACTIONS =================
-    def add_manual_record(self):
-        d = self.e_date.get().strip()
-        t = self.e_type.get()
-        c = self.e_cat.get().strip().replace(" ", "_") or "Uncategorized"
-        m = self.e_money.get().strip()
-        desc = self.e_desc.get().strip() or "No_Description"
-        
-        t_char = 'I' if t == "Income" else 'E'
-        raw = f"{t_char} {d} {c} {m} {desc}"
-        
-        parsed = Input.parse_staged_line(raw)
-        if parsed["valid"]:
-            self.records.append(parsed["record"])
-            self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-            self.save()
-            messagebox.showinfo("Success", "Record added securely.")
-            self.e_date.delete(0, tk.END)
-            self.e_cat.delete(0, tk.END)
-            self.e_money.delete(0, tk.END)
-            self.e_desc.delete(0, tk.END)
-            self.refresh_all()
-        else:
-            # Task 4 FIX: Explicit invalid input alarm showing exact error
-            messagebox.showerror("Invalid Input", f"Failed to add record.\n\nError Type: {parsed['error']}")
-
-    def import_file(self):
-        # Task 5 FIX: Reads line by line, checks validity, and reports formatting errors natively
-        fpath = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
-        if not fpath: return
-        
-        valid_recs = []
-        invalid_lines = []
-        
-        try:
-            with open(fpath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    raw_line = line.strip()
-                    if not raw_line: continue
-                    
-                    # Assume Expense if the line doesn't start with I or E
-                    parts = raw_line.split(" ")
-                    if parts and parts[0].upper() not in ['I', 'E']:
-                        raw_line = "E " + raw_line
-
-                    parsed = Input.parse_staged_line(raw_line)
-                    if parsed["valid"]:
-                        valid_recs.append(parsed["record"])
-                    else:
-                        invalid_lines.append((raw_line, parsed["error"]))
-        except Exception as e:
-            messagebox.showerror("File Read Error", f"Could not process file: {e}")
-            return
-            
-        if valid_recs:
-            self.records.extend(valid_recs)
-            self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-            self.save()
-            self.refresh_all()
-            
-        if invalid_lines:
-            self.show_import_errors(len(valid_recs), invalid_lines)
-        else:
-            messagebox.showinfo("Success", f"Imported {len(valid_recs)} records successfully.")
-
-    def show_import_errors(self, valid_count, invalid_lines):
-        """Displays a detailed report of invalid rows found during file import"""
-        err_win = tk.Toplevel(self)
-        err_win.title("Import Report")
-        err_win.geometry("600x400")
-        err_win.configure(bg="#F0F4F8")
-        err_win.grab_set()
-        
-        ttk.Label(err_win, text=f"Imported {valid_count} valid records.", font=('Segoe UI', 10, 'bold'), foreground="darkgreen").pack(pady=5)
-        ttk.Label(err_win, text=f"Found {len(invalid_lines)} invalid rows that were skipped:", font=('Segoe UI', 10, 'bold'), foreground="darkred").pack(pady=5)
-        
-        text_area = tk.Text(err_win, wrap=tk.WORD, bg="#ffffff", font=("Consolas", 10))
-        text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        text_area.tag_configure("black", foreground="black")
-        text_area.tag_configure("red", foreground="red", font=("Consolas", 10, "bold"))
-        
-        for raw, error in invalid_lines:
-            text_area.insert(tk.END, f"{raw} ", "black")
-            text_area.insert(tk.END, f"[{error}]\n", "red")
-        
-        text_area.config(state=tk.DISABLED)
-        ttk.Button(err_win, text="Close", command=err_win.destroy).pack(pady=10)
-
-    def edit_selected_record(self):
-        sel = self.tree.selection()
-        if not sel: 
-            messagebox.showwarning("Warning", "Please select a record to edit first.")
-            return
-            
-        # Task 3 FIX: Refuse multiple selection
-        if len(sel) > 1:
-            messagebox.showerror("Error", "You can only edit one record at a time. Please select only one row.")
-            return
-            
-        idx = int(sel[0]) # IID tracks the global index in self.records
-        r = self.records[idx]
-        
-        edit_win = tk.Toplevel(self)
-        edit_win.title("Edit Record")
-        edit_win.geometry("350x260")
-        edit_win.configure(bg="#F0F4F8")
-        edit_win.grab_set() # Block main window interactions
-        
-        ttk.Label(edit_win, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        e_date = ttk.Entry(edit_win)
-        e_date.insert(0, f"{r['year']}-{r['month']:02d}-{r['day']:02d}")
-        e_date.grid(row=0, column=1, padx=10, pady=10)
-        
-        ttk.Label(edit_win, text="Type:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
-        e_type = ttk.Combobox(edit_win, values=["Expense", "Income"], state="readonly")
-        e_type.set("Income" if r.get("is_income") else "Expense")
-        e_type.grid(row=1, column=1, padx=10, pady=10)
-        
-        ttk.Label(edit_win, text="Category:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
-        e_cat = ttk.Entry(edit_win)
-        e_cat.insert(0, r["category"])
-        e_cat.grid(row=2, column=1, padx=10, pady=10)
-        
-        ttk.Label(edit_win, text="Money:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
-        e_money = ttk.Entry(edit_win)
-        e_money.insert(0, str(r["money"]))
-        e_money.grid(row=3, column=1, padx=10, pady=10)
-        
-        ttk.Label(edit_win, text="Description:").grid(row=4, column=0, padx=10, pady=10, sticky="w")
-        e_desc = ttk.Entry(edit_win)
-        e_desc.insert(0, r.get("description", ""))
-        e_desc.grid(row=4, column=1, padx=10, pady=10)
-        
-        def save_edit():
-            new_c = e_cat.get().strip().replace(" ", "_") or "Uncategorized"
-            new_desc = e_desc.get().strip() or "No_Description"
-            raw = f"{'I' if e_type.get() == 'Income' else 'E'} {e_date.get().strip()} {new_c} {e_money.get().strip()} {new_desc}"
-            parsed = Input.parse_staged_line(raw)
-            if parsed["valid"]:
-                new_rec = parsed["record"]
-                # Retain the anomaly bypass status if it remained an expense
-                if not new_rec["is_income"]:
-                    new_rec["ignore_anomaly"] = r.get("ignore_anomaly", False)
-                
-                self.records[idx] = new_rec
-                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-                self.save()
-                self.refresh_all()
-                edit_win.destroy()
-                messagebox.showinfo("Success", "Record updated successfully.")
-            else:
-                messagebox.showerror("Invalid Input", f"Failed to edit record.\n\nError Type: {parsed['error']}")
-                
-        ttk.Button(edit_win, text="Save Changes", command=save_edit).grid(row=5, column=0, columnspan=2, pady=15)
-
-    def set_combined_limit(self):
-        scale_val = self.lim_scale.get().split()[0] # gets 'd', 'w', 'm', 'y', 'all'
-        cat_val = self.lim_cat.get().strip() or "All"
-        try:
-            amt = float(self.lim_amt.get())
-            self.lm.set_limit(scale_val, cat_val, amt)
-            messagebox.showinfo("Success", f"Limit set for Scale '{scale_val}', Category '{cat_val}' to ${amt}")
-            self.refresh_all()
-        except ValueError:
-            messagebox.showerror("Error", "Invalid amount")
-
-    def delete_selected_record(self):
-        sel = self.tree.selection()
-        if not sel: return
-        
-        if messagebox.askyesno("Confirm", f"Delete {len(sel)} selected record(s)?"):
-            # Delete in reverse index order to avoid array shifting issues
-            indices = sorted([int(x) for x in sel], reverse=True)
-            for idx in indices:
-                if 0 <= idx < len(self.records):
-                    self.records.pop(idx)
-            self.save()
-            self.refresh_all()
-
-    def toggle_anomaly(self):
-        sel = self.tree.selection()
-        if not sel: return
-        
-        toggled_any = False
-        for s in sel:
-            idx = int(s)
-            if 0 <= idx < len(self.records):
-                r = self.records[idx]
-                if not r.get("is_income", False):
-                    r["ignore_anomaly"] = not r.get("ignore_anomaly", False)
-                    toggled_any = True
-        
-        if toggled_any:
-            self.save()
-            self.refresh_all()
-        else:
-            messagebox.showinfo("Info", "Income records don't trigger anomaly checks.")
-
-    def on_close(self):
-        self.save()
+    def _set_inf(self):
+        self.result = (self.var_min.get(), float('inf'))
         self.destroy()
 
+    def _save(self):
+        try:
+            m_val = float('inf') if self.var_max_str.get().upper() == "INF" else float(self.var_max_str.get())
+            self.result = (float(self.var_min_str.get()), m_val)
+            self.destroy()
+        except ValueError:
+            messagebox.showerror("Error", "Invalid numbers entered.", parent=self)
+
+class VirtualTable(tk.Frame):
+    """High-Performance Canvas-based Table with flat, modern styling."""
+    def __init__(self, parent, headers, widths, sort_callback, edit_callback):
+        super().__init__(parent, bg=C_PANEL)
+        self.headers = headers
+        self.widths = widths
+        self.sort_callback = sort_callback
+        self.edit_callback = edit_callback
+        self.row_height = 35
+        self.data = []
+        self.is_income = False
+        self.max_money = 0
+        
+        self.head_canvas = tk.Canvas(self, height=40, bg=C_HEAD, highlightthickness=0)
+        self.head_canvas.pack(fill=tk.X)
+        self.head_canvas.bind("<Button-1>", self._on_header_click)
+        
+        self.body_canvas = tk.Canvas(self, bg=C_PANEL, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.body_canvas.yview)
+        self.body_canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        self.body_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.body_canvas.bind("<Double-Button-1>", self._on_body_dblclick)
+        self.body_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event):
+        self.body_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    def _get_x_coords(self):
+        x = 15
+        coords = []
+        for w in self.widths:
+            coords.append(x)
+            x += w
+        return coords
+
+    def _on_header_click(self, event):
+        coords = self._get_x_coords()
+        for i, x in enumerate(coords):
+            if x <= event.x <= (x + self.widths[i]):
+                self.sort_callback(self.headers[i])
+                break
+
+    def _on_body_dblclick(self, event):
+        canvas_y = self.body_canvas.canvasy(event.y)
+        row_idx = int(canvas_y // self.row_height)
+        if 0 <= row_idx < len(self.data):
+            self.edit_callback(self.data[row_idx]["record_ref"])
+
+    def update_data(self, processed_data, is_income, max_money):
+        self.data = processed_data
+        self.is_income = is_income
+        self.max_money = max_money
+        self._redraw()
+
+    def _redraw(self):
+        self.head_canvas.delete("all")
+        self.body_canvas.delete("all")
+        coords = self._get_x_coords()
+        
+        # Headers
+        for i, h in enumerate(self.headers):
+            self.head_canvas.create_text(coords[i], 20, text=h.upper(), fill=C_MUTED, font=("Segoe UI", 9, "bold"), anchor="w")
+            
+        total_height = len(self.data) * self.row_height
+        self.body_canvas.configure(scrollregion=(0, 0, sum(self.widths)+20, total_height))
+        
+        # Body Rows
+        for r_idx, row in enumerate(self.data):
+            y_top = r_idx * self.row_height
+            y_mid = y_top + (self.row_height // 2)
+            
+            is_ano = row.get("is_anomaly") and not row["record_ref"].get("ignore_anomaly")
+            
+            bg_color = C_PANEL if r_idx % 2 == 0 else '#233044'
+            if is_ano: bg_color = '#3b2f19'
+                
+            self.body_canvas.create_rectangle(0, y_top, sum(self.widths)+20, y_top+self.row_height, fill=bg_color, outline="")
+            self.body_canvas.create_line(0, y_top+self.row_height, sum(self.widths)+20, y_top+self.row_height, fill='#334155')
+            
+            fg = C_INC if self.is_income else (C_FG if not is_ano else C_ANO)
+            
+            for c_idx, val in enumerate(row["values"][:-1]):
+                text_col = C_FG
+                if c_idx == 4: text_col = fg
+                elif c_idx == 3 and is_ano: text_col = C_ANO
+                elif c_idx == 3 and self.is_income: text_col = C_INC
+                
+                self.body_canvas.create_text(coords[c_idx], y_mid, text=str(val), fill=text_col, font=("Segoe UI", 10), anchor="w")
+                
+            money = row["record_ref"]["money"]
+            c_idx = len(row["values"]) - 1
+            bar_x = coords[c_idx]
+            bar_w = self.widths[c_idx] - 20
+            
+            if self.max_money > 1e-9 and money > 1e-9:
+                length = (math.log(money + 1) / math.log(self.max_money + 1)) * bar_w
+                length = max(4, length)
+                create_round_rectangle(self.body_canvas, bar_x, y_mid-5, bar_x+length, y_mid+5, radius=4, fill=C_BAR, outline="")
+
+class CollapsibleSection(tk.Frame):
+    def __init__(self, parent, title, color, headers, widths, sort_cb, edit_cb, toggle_cb=None):
+        super().__init__(parent, bg=C_BG)
+        self.is_open = True
+        self.toggle_cb = toggle_cb
+        
+        self.head_frame = tk.Frame(self, bg=C_PANEL, pady=8, padx=15)
+        self.head_frame.pack(fill=tk.X)
+        
+        self.lbl_title = tk.Label(self.head_frame, text=title, bg=C_PANEL, fg=color, font=("Segoe UI", 12, "bold"))
+        self.lbl_title.pack(side=tk.LEFT)
+        
+        self.btn_toggle = tk.Button(self.head_frame, text="[-] Hide", bg=C_BG, fg=C_FG, relief=tk.FLAT, command=self.toggle)
+        self.btn_toggle.pack(side=tk.RIGHT)
+        
+        self.table = VirtualTable(self, headers, widths, sort_cb, edit_cb)
+        self.table.pack(fill=tk.BOTH, expand=True)
+
+    def toggle(self):
+        self.is_open = not self.is_open
+        if self.is_open:
+            self.table.pack(fill=tk.BOTH, expand=True)
+            self.btn_toggle.config(text="[-] Hide")
+        else:
+            self.table.pack_forget()
+            self.btn_toggle.config(text="[+] Show")
+            
+        if self.toggle_cb:
+            self.toggle_cb(self, self.is_open)
+
+class FinanceSystemGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Group 8 Project - PFMS Dashboard")
+        self.root.geometry("1200x800")
+        self.root.configure(bg=C_BG)
+        
+        self.records = Input.read_input("data.json", "json")
+        self.lm = Limit.LimitManager()
+        
+        self.scale = "All"
+        self.target_date = None
+        self.category_filter = "All"
+        self.range_filter = (0.0, float('inf'))
+        self.auto_suggest = True
+        self.sort_mode = "time"
+        self.sort_desc = False
+        self.details_visible = True
+        
+        self._setup_styles()
+        self._build_ui()
+        self._bind_keys()
+        self.update_ui()
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TButton", font=("Segoe UI", 10), background=C_PANEL, foreground=C_FG, borderwidth=0)
+
+    def _build_ui(self):
+        # 1. TOP HEADER BAR
+        header_frame = tk.Frame(self.root, bg=C_BG, pady=15, padx=20)
+        header_frame.pack(fill=tk.X)
+        
+        title_frame = tk.Frame(header_frame, bg=C_BG)
+        title_frame.pack(side=tk.LEFT)
+        tk.Label(title_frame, text="Group 8 Project", bg=C_BG, fg=C_BAR, font=("Segoe UI", 20, "bold")).pack(anchor="w")
+        self.lbl_filters = tk.Label(title_frame, bg=C_BG, fg=C_MUTED, font=("Segoe UI", 10), anchor="w")
+        self.lbl_filters.pack(anchor="w")
+        
+        ctrl_frame = tk.Frame(header_frame, bg=C_BG)
+        ctrl_frame.pack(side=tk.RIGHT, pady=10)
+        
+        def btn(text, cmd):
+            b = tk.Button(ctrl_frame, text=text, command=cmd, bg=C_PANEL, fg=C_FG, relief=tk.FLAT, padx=8, pady=5)
+            b.pack(side=tk.LEFT, padx=3)
+            
+        btn("[T] Time", self._handle_time_menu)
+        btn("[C] Cat", self._handle_category)
+        btn("[R] Range", self._handle_range)
+        btn("[L] Limits", self._handle_limit_menu)
+        btn("[S] Sort", self._handle_sort_menu)
+        btn("[I] Input", self._handle_input)
+        btn("[Y] Details", self._toggle_details)
+
+        # 2. MIDDLE DASHBOARD CARDS
+        self.card_canvas = tk.Canvas(self.root, height=130, bg=C_BG, highlightthickness=0)
+        self.card_canvas.pack(fill=tk.X, padx=15, pady=5)
+
+        # 3. BOTTOM TABLES CONTAINER
+        self.tables_container = tk.Frame(self.root, bg=C_BG)
+        self.tables_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Secure PanedWindow implementation that prevents widgets from leaving the manager
+        self.paned_window = tk.PanedWindow(self.tables_container, orient=tk.VERTICAL, bg='#334155', bd=0, sashwidth=6, sashpad=4)
+        self.paned_window.pack(fill=tk.BOTH, expand=True)
+        
+        headers = ["Idx", "Date", "Category", "Status", "Amount", "Description", "Bar Chart"]
+        widths = [40, 90, 120, 100, 90, 200, 250]
+        
+        self.inc_section = CollapsibleSection(self.paned_window, "Recent Income", C_INC, headers, widths, self._handle_sort, self.edit_record, self._on_section_toggle)
+        self.exp_section = CollapsibleSection(self.paned_window, "Recent Expenses", C_EXP, headers, widths, self._handle_sort, self.edit_record, self._on_section_toggle)
+        
+        self.paned_window.add(self.inc_section, stretch="always", minsize=45)
+        self.paned_window.add(self.exp_section, stretch="always", minsize=45)
+        
+        self.card_canvas.bind('<Configure>', self._on_canvas_resize)
+
+    def _on_section_toggle(self, section, is_open):
+        """Robust toggle logic using sash placement to close gaps without removing widgets."""
+        if section == self.inc_section:
+            if not is_open:
+                self.paned_window.paneconfigure(self.inc_section, stretch="never")
+                self.paned_window.sash_place(0, 0, 45) # Force sash to the top
+            else:
+                self.paned_window.paneconfigure(self.inc_section, stretch="always")
+                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() // 2)
+        else:
+            if not is_open:
+                self.paned_window.paneconfigure(self.exp_section, stretch="never")
+                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() - 45) # Force sash to bottom
+            else:
+                self.paned_window.paneconfigure(self.exp_section, stretch="always")
+                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() // 2)
+
+    def _on_canvas_resize(self, event):
+        if hasattr(self, '_resize_timer'): self.root.after_cancel(self._resize_timer)
+        self._resize_timer = self.root.after(150, self.update_ui)
+
+    def _bind_keys(self):
+        self.root.bind('<Key>', self.handle_keypress)
+
+    def handle_keypress(self, event):
+        if isinstance(event.widget, (tk.Entry, tk.Text, tk.Listbox)): return
+        if not event.char: return
+        char = event.char.upper()
+        
+        if char == 'Q': self.quit_app()
+        elif char == 'T': self._handle_time_menu()
+        elif char == 'C': self._handle_category()
+        elif char == 'R': self._handle_range()
+        elif char == 'S': self._handle_sort_menu()
+        elif char == 'I': self._handle_input()
+        elif char == 'L': self._handle_limit_menu()
+        elif char == 'Y': self._toggle_details()
+
+    def _toggle_details(self):
+        self.details_visible = not self.details_visible
+        if self.details_visible:
+            self.tables_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        else:
+            self.tables_container.pack_forget()
+
+    def _handle_sort_menu(self):
+        top = tk.Toplevel(self.root)
+        top.title("Sort Options")
+        top.geometry("250x300")
+        top.configure(bg=C_PANEL)
+        top.transient(self.root)
+        top.grab_set()
+        
+        tk.Label(top, text="Sort Mode", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 12, "bold")).pack(pady=10)
+        
+        var_mode = tk.StringVar(value=self.sort_mode)
+        modes = [("Time / Date", "time"), ("Amount / Money", "money"), ("Category (Alphabet)", "alphabet")]
+        
+        for text, mode in modes:
+            tk.Radiobutton(top, text=text, variable=var_mode, value=mode, bg=C_PANEL, fg=C_FG, selectcolor=C_BG, activebackground=C_PANEL, activeforeground=C_FG).pack(anchor='w', padx=40, pady=2)
+            
+        tk.Label(top, text="Order", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 12, "bold")).pack(pady=10)
+        var_desc = tk.BooleanVar(value=self.sort_desc)
+        tk.Radiobutton(top, text="Ascending", variable=var_desc, value=False, bg=C_PANEL, fg=C_FG, selectcolor=C_BG, activebackground=C_PANEL, activeforeground=C_FG).pack(anchor='w', padx=40, pady=2)
+        tk.Radiobutton(top, text="Descending", variable=var_desc, value=True, bg=C_PANEL, fg=C_FG, selectcolor=C_BG, activebackground=C_PANEL, activeforeground=C_FG).pack(anchor='w', padx=40, pady=2)
+        
+        def apply_sort():
+            self.sort_mode = var_mode.get()
+            self.sort_desc = var_desc.get()
+            self.update_ui()
+            top.destroy()
+            
+        tk.Button(top, text="Apply Sort", command=apply_sort, bg=C_BAR, fg='#fff', relief=tk.FLAT).pack(pady=20)
+
+    def _handle_sort(self, col_name):
+        if col_name == "Amount": new_mode = "money"
+        elif col_name == "Date": new_mode = "time"
+        elif col_name == "Category": new_mode = "alphabet"
+        else: return
+        
+        if self.sort_mode == new_mode: self.sort_desc = not self.sort_desc
+        else:
+            self.sort_mode = new_mode
+            self.sort_desc = False
+        self.update_ui()
+
+    def _handle_time_menu(self):
+        """Upgraded Interactive Time Selection Menu"""
+        top = tk.Toplevel(self.root)
+        top.title("Time Scale Options")
+        top.geometry("300x360")
+        top.configure(bg=C_PANEL)
+        top.transient(self.root)
+        top.grab_set()
+
+        tk.Label(top, text="Select Time Filter", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 12, "bold")).pack(pady=10)
+
+        var_scale = tk.StringVar(value=self.scale)
+
+        def on_scale_change(*args):
+            s = var_scale.get()
+            if s == "All":
+                entry_date.config(state='disabled')
+                var_date.set("")
+                lbl_hint.config(text="(No text input needed)")
+            else:
+                entry_date.config(state='normal')
+                if s == "Year":
+                    lbl_hint.config(text="Enter Year (YYYY):")
+                    var_date.set(str(self.target_date["year"]) if self.scale == "Year" and self.target_date else str(datetime.now().year))
+                elif s == "Month":
+                    lbl_hint.config(text="Enter Month (YYYY-MM):")
+                    var_date.set(f"{self.target_date['year']}-{self.target_date['month']:02d}" if self.scale == "Month" and self.target_date else datetime.now().strftime("%Y-%m"))
+                elif s == "Day":
+                    lbl_hint.config(text="Enter Day (YYYY-MM-DD):")
+                    var_date.set(f"{self.target_date['year']}-{self.target_date['month']:02d}-{self.target_date['day']:02d}" if self.scale == "Day" and self.target_date else datetime.now().strftime("%Y-%m-%d"))
+
+        scales = [("All Time", "All"), ("Yearly", "Year"), ("Monthly", "Month"), ("Daily", "Day")]
+        for text, val in scales:
+            tk.Radiobutton(top, text=text, variable=var_scale, value=val, bg=C_PANEL, fg=C_FG, selectcolor=C_BG, activebackground=C_PANEL, activeforeground=C_FG, command=on_scale_change).pack(anchor='w', padx=40, pady=2)
+
+        lbl_hint = tk.Label(top, text="", bg=C_PANEL, fg=C_MUTED, font=("Segoe UI", 10))
+        lbl_hint.pack(pady=(15, 5))
+
+        var_date = tk.StringVar()
+        entry_date = tk.Entry(top, textvariable=var_date, bg=C_BG, fg=C_FG, insertbackground=C_FG, justify='center', font=("Consolas", 12))
+        entry_date.pack(pady=5, padx=40, fill=tk.X, ipady=3)
+
+        on_scale_change()
+
+        def apply_time():
+            s = var_scale.get()
+            d_val = var_date.get().strip()
+            if s == "All":
+                self.scale = "All"
+                self.target_date = None
+            elif s == "Year":
+                if d_val.isdigit() and len(d_val) == 4:
+                    self.scale = "Year"
+                    self.target_date = {"year": int(d_val)}
+                else: messagebox.showerror("Error", "Invalid Year format (YYYY).", parent=top); return
+            elif s == "Month":
+                parts = d_val.split('-')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    self.scale = "Month"
+                    self.target_date = {"year": int(parts[0]), "month": int(parts[1])}
+                else: messagebox.showerror("Error", "Invalid Month format (YYYY-MM).", parent=top); return
+            elif s == "Day":
+                dp = Input.validate_date(d_val)
+                if dp:
+                    self.scale = "Day"
+                    self.target_date = {"year": dp[0], "month": dp[1], "day": dp[2]}
+                else: messagebox.showerror("Error", "Invalid Day format (YYYY-MM-DD).", parent=top); return
+            self.update_ui()
+            top.destroy()
+
+        tk.Button(top, text="Apply Filter", command=apply_time, bg=C_BAR, fg='#fff', relief=tk.FLAT).pack(pady=15)
+
+    def _handle_category(self):
+        cats = ["All Categories"] + list(set(r["category"] for r in self.records))
+        top = tk.Toplevel(self.root)
+        top.title("Select Category")
+        top.geometry("300x400")
+        top.configure(bg=C_PANEL)
+        top.transient(self.root)
+        top.grab_set()
+        tk.Label(top, text="Click or Select Category:", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 11)).pack(pady=5)
+        listbox = tk.Listbox(top, bg=C_HEAD, fg=C_FG, font=("Segoe UI", 11), selectbackground=C_BAR, borderwidth=0)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        for i, c in enumerate(cats): listbox.insert(tk.END, f"{i}: {c}")
+        def on_select(event=None):
+            if listbox.curselection():
+                self.category_filter = "All" if listbox.curselection()[0] == 0 else cats[listbox.curselection()[0]]
+                self.update_ui()
+                top.destroy()
+        listbox.bind("<Double-Button-1>", on_select)
+        listbox.bind("<Return>", on_select)
+
+    def _handle_range(self):
+        max_val = max([r["money"] for r in self.records] + [100.0]) if self.records else 100.0
+        dialog = RangeSliderDialog(self.root, self.range_filter[0], self.range_filter[1], max_val)
+        self.root.wait_window(dialog)
+        if dialog.result:
+            self.range_filter = dialog.result
+            self.update_ui()
+
+    def _handle_limit_menu(self):
+        top = tk.Toplevel(self.root)
+        top.title("Limit Management Dashboard")
+        top.geometry("600x500")
+        top.configure(bg=C_PANEL)
+        top.transient(self.root)
+        top.grab_set()
+        
+        all_exp = sum(r["money"] for r in self.records if not r.get("is_income", False))
+        all_inc = sum(r["money"] for r in self.records if r.get("is_income", False))
+        
+        tk.Label(top, text="LIMIT MANAGEMENT DASHBOARD", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 14, "bold")).pack(pady=10)
+        tk.Label(top, text=f"Lifetime Exp: ${all_exp:,.2f}  |  Lifetime Inc: ${all_inc:,.2f}", bg=C_PANEL, fg=C_BAR, font=("Segoe UI", 12)).pack()
+        
+        grid_frame = tk.Frame(top, bg=C_PANEL)
+        grid_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        t_frame = tk.Frame(grid_frame, bg=C_BG, padx=15, pady=15)
+        t_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,10))
+        tk.Label(t_frame, text="ACTIVE TIME LIMITS", bg=C_BG, fg=C_BAR, font=("Segoe UI", 11, "bold")).pack(anchor='w', pady=(0,10))
+        
+        scale_map = {'d':'Daily', 'w':'Weekly', 'm':'Monthly', 'y':'Yearly'}
+        act_t = False
+        for k, v in self.lm.time_limits.items():
+            if v > 1e-9:
+                tk.Label(t_frame, text=f"- {scale_map.get(k, k)}: ${v:,.2f}", bg=C_BG, fg=C_FG).pack(anchor='w')
+                act_t = True
+        if not act_t:
+            if self.auto_suggest:
+                s_str, t_days = Statistic.determine_scale([r for r in self.records if not r.get("is_income", False)], "All")
+                sug = Statistic.predict_budget([r for r in self.records if not r.get("is_income", False)], t_days)
+                tk.Label(t_frame, text=f">> Auto-Suggested {s_str}:\n${sug:,.0f}", bg=C_BG, fg=C_PUR, justify=tk.LEFT).pack(anchor='w')
+            else:
+                tk.Label(t_frame, text="(None set)", bg=C_BG, fg=C_MUTED).pack(anchor='w')
+
+        c_frame = tk.Frame(grid_frame, bg=C_BG, padx=15, pady=15)
+        c_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10,0))
+        tk.Label(c_frame, text="ACTIVE CATEGORY LIMITS", bg=C_BG, fg=C_BAR, font=("Segoe UI", 11, "bold")).pack(anchor='w', pady=(0,10))
+        act_c = False
+        for k, v in self.lm.category_limits.items():
+            if v > 1e-9:
+                tk.Label(c_frame, text=f"- {k}: ${v:,.2f}", bg=C_BG, fg=C_FG).pack(anchor='w')
+                act_c = True
+        if not act_c:
+            tk.Label(c_frame, text="(None set)", bg=C_BG, fg=C_MUTED).pack(anchor='w')
+            
+        btn_f = tk.Frame(top, bg=C_PANEL)
+        btn_f.pack(pady=10)
+        
+        def _add_time():
+            s = simpledialog.askstring("Time", "Scale [d/w/m/y]:", parent=top)
+            if s and s.lower() in ['d','w','m','y']:
+                a = simpledialog.askfloat("Amount", "Limit:", parent=top)
+                if a is not None: self.lm.set_limit("time", s.lower(), a); self.update_ui(); top.destroy(); self._handle_limit_menu()
+                
+        def _add_cat():
+            c = simpledialog.askstring("Category", "Name:", parent=top)
+            if c:
+                a = simpledialog.askfloat("Amount", "Limit:", parent=top)
+                if a is not None: self.lm.set_limit("cat", c, a); self.update_ui(); top.destroy(); self._handle_limit_menu()
+                
+        def _rem():
+            ch = simpledialog.askstring("Remove", "[T]ime or [C]ategory?", parent=top)
+            if ch and ch.upper() == 'T':
+                s = simpledialog.askstring("Scale", "[d/w/m/y]:", parent=top)
+                if s: self.lm.set_limit("time", s.lower(), 0.0); self.update_ui(); top.destroy(); self._handle_limit_menu()
+            elif ch and ch.upper() == 'C':
+                c = simpledialog.askstring("Category", "Name:", parent=top)
+                if c: self.lm.set_limit("cat", c, 0.0); self.update_ui(); top.destroy(); self._handle_limit_menu()
+                
+        def _tog():
+            self.auto_suggest = not self.auto_suggest; self.update_ui(); top.destroy(); self._handle_limit_menu()
+
+        tk.Button(btn_f, text="Add Time Limit", command=_add_time, bg=C_BG, fg=C_FG, relief=tk.FLAT, width=15).grid(row=0, column=0, padx=5, pady=5)
+        tk.Button(btn_f, text="Add Cat Limit", command=_add_cat, bg=C_BG, fg=C_FG, relief=tk.FLAT, width=15).grid(row=0, column=1, padx=5, pady=5)
+        tk.Button(btn_f, text="Remove Limit", command=_rem, bg=C_BG, fg=C_FG, relief=tk.FLAT, width=15).grid(row=0, column=2, padx=5, pady=5)
+        tk.Button(btn_f, text=f"Auto-Suggest: {'ON' if self.auto_suggest else 'OFF'}", command=_tog, bg=C_PUR, fg='#fff', relief=tk.FLAT, width=20).grid(row=1, column=0, columnspan=3, pady=10)
+
+    def _handle_input(self):
+        top = tk.Toplevel(self.root)
+        top.title("Data Input Staging Area")
+        top.geometry("800x500")
+        top.configure(bg=C_PANEL)
+        top.transient(self.root)
+        top.grab_set()
+        
+        staging_buffer = []
+        lbl_text = "Manual Format: [I/E] [YYYY-MM-DD] [Category] [Amount] [Description]\n(I = Income, E = Expense)\nFile Format: F filename.txt"
+        tk.Label(top, text=lbl_text, bg=C_PANEL, fg=C_MUTED, font=("Segoe UI", 10), justify=tk.LEFT).pack(anchor='w', padx=15, pady=10)
+        
+        entry = tk.Entry(top, font=("Consolas", 12), bg=C_BG, fg=C_FG, insertbackground=C_FG, relief=tk.FLAT)
+        entry.pack(fill=tk.X, padx=15, pady=5, ipady=5)
+        entry.focus_set()
+        
+        tree = ttk.Treeview(top, columns=("raw", "status"), show="headings", height=10)
+        tree.heading("raw", text="Parsed Record")
+        tree.heading("status", text="Status")
+        tree.column("raw", width=600)
+        tree.column("status", width=150)
+        tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        def process_cmd(event=None):
+            raw = entry.get().strip()
+            if not raw: return
+            entry.delete(0, tk.END)
+            
+            if raw.upper() == 'DONE':
+                for item in staging_buffer: self.records.append(item["record"])
+                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+                with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+                self.update_ui()
+                top.destroy()
+                return
+                
+            if raw.upper().startswith('F '):
+                try:
+                    with open(raw[2:].strip(), 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.strip():
+                                parsed = Input.parse_staged_line(line.strip() if line.strip()[0].upper() in ['I','E'] else "E " + line.strip())
+                                if parsed["valid"]:
+                                    staging_buffer.append(parsed)
+                                    tree.insert("", tk.END, values=(parsed['raw'], "Valid"))
+                except Exception as e: messagebox.showerror("Error", str(e), parent=top)
+            else:
+                parsed = Input.parse_staged_line(raw)
+                if parsed["valid"]:
+                    staging_buffer.append(parsed)
+                    tree.insert("", tk.END, values=(parsed['raw'], "Valid"))
+                else:
+                    messagebox.showerror("Error", parsed["error"], parent=top)
+                    
+        entry.bind("<Return>", process_cmd)
+        tk.Button(top, text="Submit/Add (or type DONE to save)", command=process_cmd, bg=C_BAR, fg='#fff', relief=tk.FLAT).pack(pady=10)
+
+    def edit_record(self, record):
+        top = tk.Toplevel(self.root)
+        top.title("Edit Record")
+        top.geometry("400x350")
+        top.configure(bg=C_PANEL)
+        
+        def save_edits():
+            record["category"] = e_cat.get().strip()
+            record["description"] = e_desc.get().strip()
+            try: record["money"] = float(e_money.get().strip())
+            except: pass
+            dp = Input.validate_date(e_date.get().strip())
+            if dp: record["year"], record["month"], record["day"] = dp
+            record["ignore_anomaly"] = bool(var_ignore.get())
+            with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+            self.update_ui()
+            top.destroy()
+            
+        def del_record():
+            self.records.remove(record)
+            with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+            self.update_ui()
+            top.destroy()
+
+        tk.Label(top, text="Date (YYYY-MM-DD):", bg=C_PANEL, fg=C_FG).pack(pady=2)
+        e_date = tk.Entry(top); e_date.insert(0, f"{record['year']}-{record['month']:02d}-{record['day']:02d}"); e_date.pack()
+        tk.Label(top, text="Category:", bg=C_PANEL, fg=C_FG).pack(pady=2)
+        e_cat = tk.Entry(top); e_cat.insert(0, record['category']); e_cat.pack()
+        tk.Label(top, text="Amount:", bg=C_PANEL, fg=C_FG).pack(pady=2)
+        e_money = tk.Entry(top); e_money.insert(0, str(record['money'])); e_money.pack()
+        tk.Label(top, text="Description:", bg=C_PANEL, fg=C_FG).pack(pady=2)
+        e_desc = tk.Entry(top); e_desc.insert(0, record.get('description','')); e_desc.pack()
+        
+        var_ignore = tk.IntVar(value=int(record.get('ignore_anomaly', False)))
+        if not record.get("is_income", False):
+            tk.Checkbutton(top, text="Ignore Anomaly", variable=var_ignore, bg=C_PANEL, fg=C_ANO, selectcolor=C_BG, activebackground=C_PANEL, activeforeground=C_ANO).pack(pady=10)
+            
+        btn_f = tk.Frame(top, bg=C_PANEL)
+        btn_f.pack(pady=15)
+        tk.Button(btn_f, text="Save", command=save_edits, bg=C_INC, fg='#fff', relief=tk.FLAT).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_f, text="Delete", command=del_record, bg=C_EXP, fg='#fff', relief=tk.FLAT).pack(side=tk.LEFT, padx=10)
+
+    def get_filtered(self):
+        f = []
+        for r in self.records:
+            if self.scale == "Year" and self.target_date and r["year"] != self.target_date["year"]: continue
+            elif self.scale == "Month" and self.target_date and (r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"]): continue
+            elif self.scale == "Day" and self.target_date and (r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]): continue
+            if self.category_filter != "All" and r["category"] != self.category_filter: continue
+            if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]): continue
+            f.append(r)
+        return f
+
+    def update_ui(self):
+        recs = self.get_filtered()
+        exp = [r for r in recs if not r.get("is_income", False)]
+        inc = [r for r in recs if r.get("is_income", False)]
+        t_exp, t_inc = sum(r["money"] for r in exp), sum(r["money"] for r in inc)
+
+        td_str = "All Time"
+        if self.scale == "Year" and self.target_date: td_str = f"{self.target_date['year']}"
+        elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
+        elif self.scale == "Day" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}-{self.target_date['day']:02d}"
+        
+        upper_bound_str = "INF" if self.range_filter[1] == float('inf') else f"{self.range_filter[1]:.0f}"
+        self.lbl_filters.config(text=f"Time: {td_str}   |   Category: {self.category_filter}   |   Range: ${self.range_filter[0]:.0f} - ${upper_bound_str}")
+
+        # --- DRAW DASHBOARD CARDS ON CANVAS ---
+        self.card_canvas.delete("all")
+        width = self.card_canvas.winfo_width()
+        if width < 100: width = 1160 
+        
+        card_w = (width - 15) // 2
+        
+        # Draw Card 1: Overview
+        create_round_rectangle(self.card_canvas, 0, 0, card_w, 120, radius=12, fill=C_PANEL, outline="")
+        self.card_canvas.create_text(20, 20, text="FINANCIAL OVERVIEW", fill=C_MUTED, font=("Segoe UI", 9, "bold"), anchor="w")
+        
+        self.card_canvas.create_text(20, 55, text="Total Income", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
+        self.card_canvas.create_text(20, 85, text=f"${t_inc:,.2f}", fill=C_INC, font=("Segoe UI", 20, "bold"), anchor="w")
+        
+        self.card_canvas.create_text(card_w//2 + 20, 55, text="Total Expense", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
+        self.card_canvas.create_text(card_w//2 + 20, 85, text=f"${t_exp:,.2f}", fill=C_EXP, font=("Segoe UI", 20, "bold"), anchor="w")
+        
+        # Draw Card 2: Limits & Predictions
+        x_offset = card_w + 15
+        create_round_rectangle(self.card_canvas, x_offset, 0, x_offset+card_w, 120, radius=12, fill=C_PANEL, outline="")
+        
+        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
+        scale_str, target_days = Statistic.determine_scale(exp, self.scale)
+        
+        title_str = f"LIMIT PROGRESS ({limit_name})" if limit_val > 0 else "LIMIT PROGRESS"
+        self.card_canvas.create_text(x_offset+20, 20, text=title_str, fill=C_MUTED, font=("Segoe UI", 9, "bold"), anchor="w")
+        
+        bar_y = 65
+        bar_max_w = card_w - 40
+        create_round_rectangle(self.card_canvas, x_offset+20, bar_y, x_offset+20+bar_max_w, bar_y+10, radius=5, fill=C_BG, outline="")
+        
+        if self.scale == "All":
+            self.card_canvas.create_text(x_offset+20, 45, text="[ N/A in 'All' Time Scale ]", fill=C_FG, font=("Segoe UI", 11), anchor="w")
+        elif limit_val <= 1e-9:
+            if self.auto_suggest:
+                sug = Statistic.predict_budget(exp, target_days)
+                if sug > 0:
+                    s_rat = min(1.0, t_exp / sug)
+                    self.card_canvas.create_text(x_offset+20, 45, text=f"Auto-Suggested: ${t_exp:,.0f} / ${sug:,.0f} ({(t_exp/sug)*100:.0f}%)", fill=C_FG, font=("Segoe UI", 11), anchor="w")
+                    c_color = C_EXP if s_rat >= 1.0 else (C_ANO if s_rat >= 0.75 else C_BAR)
+                    create_round_rectangle(self.card_canvas, x_offset+20, bar_y, x_offset+20+(bar_max_w*s_rat), bar_y+10, radius=5, fill=c_color, outline="")
+                else:
+                    self.card_canvas.create_text(x_offset+20, 45, text="[ Log data to unlock suggestions ]", fill=C_MUTED, font=("Segoe UI", 11), anchor="w")
+            else:
+                self.card_canvas.create_text(x_offset+20, 45, text="[ Not Set ]", fill=C_MUTED, font=("Segoe UI", 11), anchor="w")
+        else:
+            self.card_canvas.create_text(x_offset+20, 45, text=f"${t_exp:,.0f} / ${limit_val:,.0f} ({ratio*100:.0f}%)", fill=C_FG, font=("Segoe UI", 11), anchor="w")
+            c_color = C_EXP if is_exc else C_BAR
+            create_round_rectangle(self.card_canvas, x_offset+20, bar_y, x_offset+20+min(bar_max_w, bar_max_w*ratio), bar_y+10, radius=5, fill=c_color, outline="")
+
+        pred = Statistic.predict_budget(exp, target_days)
+        pred_text = f"${round(pred):,.0f}" if pred > 1e-9 and self.scale != "All" else "N/A"
+        self.card_canvas.create_text(x_offset+20, 95, text=f"Predictive Budget: ", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
+        self.card_canvas.create_text(x_offset+130, 95, text=pred_text, fill=C_PUR, font=("Segoe UI", 11, "bold"), anchor="w")
+
+        # --- UPDATE TABLES ---
+        if self.sort_mode == "time":
+            exp.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=self.sort_desc)
+            inc.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=self.sort_desc)
+        elif self.sort_mode == "money":
+            exp.sort(key=lambda x: x["money"], reverse=self.sort_desc)
+            inc.sort(key=lambda x: x["money"], reverse=self.sort_desc)
+        elif self.sort_mode == "alphabet":
+            exp.sort(key=lambda x: x["category"].lower(), reverse=self.sort_desc)
+            inc.sort(key=lambda x: x["category"].lower(), reverse=self.sort_desc)
+
+        m_list = [r["money"] for r in recs if r["money"] > 0]
+        max_v = max(m_list) if m_list else 0
+        log_stats, raw_stats = Statistic.get_both_stats(exp)
+        
+        inc_data, exp_data = [], []
+        for i, r in enumerate(inc, 1):
+            date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+            inc_data.append({"values": [i, date, r["category"], "Income", f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": False, "record_ref": r})
+            
+        for i, r in enumerate(exp, 1):
+            date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+            is_ano = Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, pivot=1000.0, ignore_flag=r.get("ignore_anomaly", False))
+            stat = "Ignored" if r.get("ignore_anomaly") else ("ANOMALY" if is_ano else "Normal")
+            exp_data.append({"values": [i, date, r["category"], stat, f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": is_ano, "record_ref": r})
+
+        self.inc_section.table.update_data(inc_data, True, max_v)
+        self.exp_section.table.update_data(exp_data, False, max_v)
+
+    def quit_app(self):
+        self.root.quit()
+
 if __name__ == "__main__":
-    app = FinanceGUI()
-    app.mainloop()
+    root = tk.Tk()
+    app = FinanceSystemGUI(root)
+    root.mainloop()

@@ -21,8 +21,9 @@ C_BAR = '#3b82f6'      # Blue (Charts/Bars)
 C_PUR = '#8b5cf6'      # Purple (Predictions)
 C_HEAD = '#0f172a'     # Table Header
 
+PIE_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
+
 def create_round_rectangle(canvas, x1, y1, x2, y2, radius=15, **kwargs):
-    """Custom algorithm to draw smooth rounded rectangles in standard Tkinter."""
     points = [x1+radius, y1, x1+radius, y1, x2-radius, y1, x2-radius, y1, x2, y1, x2, y1+radius, x2, y1+radius, x2, y2-radius, x2, y2-radius, x2, y2, x2-radius, y2, x2-radius, y2, x1+radius, y2, x1+radius, y2, x1, y2, x1, y2-radius, x1, y2-radius, x1, y1+radius, x1, y1+radius, x1, y1]
     return canvas.create_polygon(points, smooth=True, **kwargs)
 
@@ -41,7 +42,6 @@ class RangeSliderDialog(tk.Toplevel):
         frame = tk.Frame(self, bg=C_PANEL)
         frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
-        # Min Controls
         tk.Label(frame, text="Minimum:", bg=C_PANEL, fg=C_FG).grid(row=0, column=0, sticky='w')
         self.var_min = tk.DoubleVar(value=current_min)
         self.scl_min = ttk.Scale(frame, from_=0, to=self.abs_max, variable=self.var_min, command=self._on_slider_min)
@@ -52,7 +52,6 @@ class RangeSliderDialog(tk.Toplevel):
         self.entry_min.grid(row=0, column=2)
         self.entry_min.bind('<KeyRelease>', self._on_entry_min)
         
-        # Max Controls
         cur_max_val = self.abs_max if current_max == float('inf') else current_max
         tk.Label(frame, text="Maximum:", bg=C_PANEL, fg=C_FG).grid(row=1, column=0, sticky='w')
         self.var_max = tk.DoubleVar(value=cur_max_val)
@@ -119,7 +118,6 @@ class RangeSliderDialog(tk.Toplevel):
             messagebox.showerror("Error", "Invalid numbers entered.", parent=self)
 
 class VirtualTable(tk.Frame):
-    """High-Performance Canvas-based Table with flat, modern styling."""
     def __init__(self, parent, headers, widths, sort_callback, edit_callback):
         super().__init__(parent, bg=C_PANEL)
         self.headers = headers
@@ -180,20 +178,20 @@ class VirtualTable(tk.Frame):
         self.body_canvas.delete("all")
         coords = self._get_x_coords()
         
-        # Headers
         for i, h in enumerate(self.headers):
             self.head_canvas.create_text(coords[i], 20, text=h.upper(), fill=C_MUTED, font=("Segoe UI", 9, "bold"), anchor="w")
             
         total_height = len(self.data) * self.row_height
         self.body_canvas.configure(scrollregion=(0, 0, sum(self.widths)+20, total_height))
         
-        # Body Rows
+        has_chart = "Bar Chart" in self.headers
+        has_status = "Status" in self.headers
+        
         for r_idx, row in enumerate(self.data):
             y_top = r_idx * self.row_height
             y_mid = y_top + (self.row_height // 2)
             
             is_ano = row.get("is_anomaly") and not row["record_ref"].get("ignore_anomaly")
-            
             bg_color = C_PANEL if r_idx % 2 == 0 else '#233044'
             if is_ano: bg_color = '#3b2f19'
                 
@@ -202,59 +200,43 @@ class VirtualTable(tk.Frame):
             
             fg = C_INC if self.is_income else (C_FG if not is_ano else C_ANO)
             
-            for c_idx, val in enumerate(row["values"][:-1]):
+            limit = len(self.headers) - 1 if has_chart else len(self.headers)
+            for c_idx in range(limit):
+                val = row["values"][c_idx]
                 text_col = C_FG
-                if c_idx == 4: text_col = fg
-                elif c_idx == 3 and is_ano: text_col = C_ANO
-                elif c_idx == 3 and self.is_income: text_col = C_INC
+                
+                if "Amount" in self.headers and c_idx == self.headers.index("Amount"): text_col = fg
+                elif has_status and c_idx == self.headers.index("Status") and is_ano: text_col = C_ANO
+                elif has_status and c_idx == self.headers.index("Status") and self.is_income: text_col = C_INC
                 
                 self.body_canvas.create_text(coords[c_idx], y_mid, text=str(val), fill=text_col, font=("Segoe UI", 10), anchor="w")
                 
-            money = row["record_ref"]["money"]
-            c_idx = len(row["values"]) - 1
-            bar_x = coords[c_idx]
-            bar_w = self.widths[c_idx] - 20
-            
-            if self.max_money > 1e-9 and money > 1e-9:
-                length = (math.log(money + 1) / math.log(self.max_money + 1)) * bar_w
-                length = max(4, length)
-                create_round_rectangle(self.body_canvas, bar_x, y_mid-5, bar_x+length, y_mid+5, radius=4, fill=C_BAR, outline="")
+            if has_chart:
+                money = row["record_ref"]["money"]
+                c_idx = len(self.headers) - 1
+                bar_x = coords[c_idx]
+                bar_w = self.widths[c_idx] - 20
+                
+                if self.max_money > 1e-9 and money > 1e-9:
+                    length = (math.log(money + 1) / math.log(self.max_money + 1)) * bar_w
+                    length = max(4, length)
+                    create_round_rectangle(self.body_canvas, bar_x, y_mid-5, bar_x+length, y_mid+5, radius=4, fill=C_BAR, outline="")
 
 class CollapsibleSection(tk.Frame):
-    def __init__(self, parent, title, color, headers, widths, sort_cb, edit_cb, toggle_cb=None):
+    def __init__(self, parent, title, color, headers, widths, sort_cb, edit_cb):
         super().__init__(parent, bg=C_BG)
-        self.is_open = True
-        self.toggle_cb = toggle_cb
-        
         self.head_frame = tk.Frame(self, bg=C_PANEL, pady=8, padx=15)
-        self.head_frame.pack(fill=tk.X)
-        
+        self.head_frame.pack(fill=tk.X, pady=(0,2))
         self.lbl_title = tk.Label(self.head_frame, text=title, bg=C_PANEL, fg=color, font=("Segoe UI", 12, "bold"))
         self.lbl_title.pack(side=tk.LEFT)
-        
-        self.btn_toggle = tk.Button(self.head_frame, text="[-] Hide", bg=C_BG, fg=C_FG, relief=tk.FLAT, command=self.toggle)
-        self.btn_toggle.pack(side=tk.RIGHT)
-        
         self.table = VirtualTable(self, headers, widths, sort_cb, edit_cb)
         self.table.pack(fill=tk.BOTH, expand=True)
-
-    def toggle(self):
-        self.is_open = not self.is_open
-        if self.is_open:
-            self.table.pack(fill=tk.BOTH, expand=True)
-            self.btn_toggle.config(text="[-] Hide")
-        else:
-            self.table.pack_forget()
-            self.btn_toggle.config(text="[+] Show")
-            
-        if self.toggle_cb:
-            self.toggle_cb(self, self.is_open)
 
 class FinanceSystemGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Group 8 Project - PFMS Dashboard")
-        self.root.geometry("1200x800")
+        self.root.geometry("1300x800")
         self.root.configure(bg=C_BG)
         
         self.records = Input.read_input("data.json", "json")
@@ -262,12 +244,13 @@ class FinanceSystemGUI:
         
         self.scale = "All"
         self.target_date = None
-        self.category_filter = "All"
         self.range_filter = (0.0, float('inf'))
         self.auto_suggest = True
         self.sort_mode = "time"
         self.sort_desc = False
-        self.details_visible = True
+        
+        all_cats = set(r["category"] for r in self.records)
+        self.active_categories = all_cats.copy()
         
         self._setup_styles()
         self._build_ui()
@@ -278,9 +261,11 @@ class FinanceSystemGUI:
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TButton", font=("Segoe UI", 10), background=C_PANEL, foreground=C_FG, borderwidth=0)
+        style.configure("TNotebook", background=C_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background=C_PANEL, foreground=C_FG, font=("Segoe UI", 11, "bold"), padding=[15, 5])
+        style.map("TNotebook.Tab", background=[("selected", C_BAR)])
 
     def _build_ui(self):
-        # 1. TOP HEADER BAR
         header_frame = tk.Frame(self.root, bg=C_BG, pady=15, padx=20)
         header_frame.pack(fill=tk.X)
         
@@ -298,52 +283,33 @@ class FinanceSystemGUI:
             b.pack(side=tk.LEFT, padx=3)
             
         btn("[T] Time", self._handle_time_menu)
-        btn("[C] Cat", self._handle_category)
+        btn("[C] Categories", self._handle_category)
         btn("[R] Range", self._handle_range)
         btn("[L] Limits", self._handle_limit_menu)
         btn("[S] Sort", self._handle_sort_menu)
         btn("[I] Input", self._handle_input)
-        btn("[Y] Details", self._toggle_details)
+        btn("[Y] Details & Graphs", self._show_details_window)
 
-        # 2. MIDDLE DASHBOARD CARDS
         self.card_canvas = tk.Canvas(self.root, height=130, bg=C_BG, highlightthickness=0)
         self.card_canvas.pack(fill=tk.X, padx=15, pady=5)
 
-        # 3. BOTTOM TABLES CONTAINER
         self.tables_container = tk.Frame(self.root, bg=C_BG)
         self.tables_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
-        # Secure PanedWindow implementation that prevents widgets from leaving the manager
-        self.paned_window = tk.PanedWindow(self.tables_container, orient=tk.VERTICAL, bg='#334155', bd=0, sashwidth=6, sashpad=4)
-        self.paned_window.pack(fill=tk.BOTH, expand=True)
+        s_headers = ["Date", "Category", "Amount"]
+        s_widths = [120, 150, 120]
         
-        headers = ["Idx", "Date", "Category", "Status", "Amount", "Description", "Bar Chart"]
-        widths = [40, 90, 120, 100, 90, 200, 250]
+        self.inc_frame = tk.Frame(self.tables_container, bg=C_BG)
+        self.inc_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        self.inc_section = CollapsibleSection(self.inc_frame, "Recent Income (Simplified)", C_INC, s_headers, s_widths, self._handle_sort, self.edit_record)
+        self.inc_section.pack(fill=tk.BOTH, expand=True)
         
-        self.inc_section = CollapsibleSection(self.paned_window, "Recent Income", C_INC, headers, widths, self._handle_sort, self.edit_record, self._on_section_toggle)
-        self.exp_section = CollapsibleSection(self.paned_window, "Recent Expenses", C_EXP, headers, widths, self._handle_sort, self.edit_record, self._on_section_toggle)
-        
-        self.paned_window.add(self.inc_section, stretch="always", minsize=45)
-        self.paned_window.add(self.exp_section, stretch="always", minsize=45)
+        self.exp_frame = tk.Frame(self.tables_container, bg=C_BG)
+        self.exp_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        self.exp_section = CollapsibleSection(self.exp_frame, "Recent Expenses (Simplified)", C_EXP, s_headers, s_widths, self._handle_sort, self.edit_record)
+        self.exp_section.pack(fill=tk.BOTH, expand=True)
         
         self.card_canvas.bind('<Configure>', self._on_canvas_resize)
-
-    def _on_section_toggle(self, section, is_open):
-        """Robust toggle logic using sash placement to close gaps without removing widgets."""
-        if section == self.inc_section:
-            if not is_open:
-                self.paned_window.paneconfigure(self.inc_section, stretch="never")
-                self.paned_window.sash_place(0, 0, 45) # Force sash to the top
-            else:
-                self.paned_window.paneconfigure(self.inc_section, stretch="always")
-                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() // 2)
-        else:
-            if not is_open:
-                self.paned_window.paneconfigure(self.exp_section, stretch="never")
-                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() - 45) # Force sash to bottom
-            else:
-                self.paned_window.paneconfigure(self.exp_section, stretch="always")
-                self.paned_window.sash_place(0, 0, self.paned_window.winfo_height() // 2)
 
     def _on_canvas_resize(self, event):
         if hasattr(self, '_resize_timer'): self.root.after_cancel(self._resize_timer)
@@ -364,14 +330,174 @@ class FinanceSystemGUI:
         elif char == 'S': self._handle_sort_menu()
         elif char == 'I': self._handle_input()
         elif char == 'L': self._handle_limit_menu()
-        elif char == 'Y': self._toggle_details()
+        elif char == 'Y': self._show_details_window()
 
-    def _toggle_details(self):
-        self.details_visible = not self.details_visible
-        if self.details_visible:
-            self.tables_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-        else:
-            self.tables_container.pack_forget()
+    def _show_details_window(self):
+        top = tk.Toplevel(self.root)
+        top.title("Detailed Analytics & Full Records")
+        top.geometry("1100x700")
+        top.configure(bg=C_BG)
+        top.transient(self.root)
+        
+        notebook = ttk.Notebook(top)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        tab_tables = tk.Frame(notebook, bg=C_BG)
+        notebook.add(tab_tables, text="Full Data Tables")
+        
+        t_frame = tk.Frame(tab_tables, bg=C_BG)
+        t_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        ctrl_f = tk.Frame(t_frame, bg=C_BG)
+        ctrl_f.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(ctrl_f, text="Sort Mode:", bg=C_BG, fg=C_FG).pack(side=tk.LEFT)
+        v_mode = tk.StringVar(value=self.sort_mode)
+        tk.Radiobutton(ctrl_f, text="Date", variable=v_mode, value="time", bg=C_BG, fg=C_FG, selectcolor=C_PANEL, command=lambda: [setattr(self, 'sort_mode', v_mode.get()), self.update_ui(), update_full_tables()]).pack(side=tk.LEFT)
+        tk.Radiobutton(ctrl_f, text="Amount", variable=v_mode, value="money", bg=C_BG, fg=C_FG, selectcolor=C_PANEL, command=lambda: [setattr(self, 'sort_mode', v_mode.get()), self.update_ui(), update_full_tables()]).pack(side=tk.LEFT)
+        
+        paned = tk.PanedWindow(t_frame, orient=tk.VERTICAL, bg='#334155', bd=0, sashwidth=6, sashpad=4)
+        paned.pack(fill=tk.BOTH, expand=True)
+        
+        f_headers = ["Idx", "Date", "Category", "Status", "Amount", "Description", "Bar Chart"]
+        f_widths = [40, 90, 120, 100, 90, 200, 250]
+        
+        full_inc = CollapsibleSection(paned, "Income Records (Full)", C_INC, f_headers, f_widths, self._handle_sort, self.edit_record)
+        full_exp = CollapsibleSection(paned, "Expense Records (Full)", C_EXP, f_headers, f_widths, self._handle_sort, self.edit_record)
+        
+        paned.add(full_inc, stretch="always", minsize=100)
+        paned.add(full_exp, stretch="always", minsize=100)
+
+        tab_pie = tk.Frame(notebook, bg=C_PANEL)
+        notebook.add(tab_pie, text="Expense Distribution")
+        c_pie = tk.Canvas(tab_pie, bg=C_PANEL, highlightthickness=0)
+        c_pie.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tab_line = tk.Frame(notebook, bg=C_PANEL)
+        notebook.add(tab_line, text="Cashflow Trends")
+        c_line = tk.Canvas(tab_line, bg=C_PANEL, highlightthickness=0)
+        c_line.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        def update_full_tables():
+            self.update_ui()
+            
+            full_inc_data, full_exp_data = [], []
+            filtered = self.get_filtered()
+            exp = [r for r in filtered if not r.get("is_income", False)]
+            inc = [r for r in filtered if r.get("is_income", False)]
+            
+            m_list = [r["money"] for r in filtered if r["money"] > 0]
+            max_v = max(m_list) if m_list else 0
+            log_stats, raw_stats = Statistic.get_both_stats(exp)
+            
+            for i, r in enumerate(inc, 1):
+                date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                full_inc_data.append({"values": [i, date, r["category"], "Income", f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": False, "record_ref": r})
+                
+            for i, r in enumerate(exp, 1):
+                date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                is_ano = Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, pivot=1000.0, ignore_flag=r.get("ignore_anomaly", False))
+                stat = "Ignored" if r.get("ignore_anomaly") else ("ANOMALY" if is_ano else "Normal")
+                full_exp_data.append({"values": [i, date, r["category"], stat, f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": is_ano, "record_ref": r})
+
+            full_inc.table.update_data(full_inc_data, True, max_v)
+            full_exp.table.update_data(full_exp_data, False, max_v)
+            draw_graphs()
+
+        def draw_graphs():
+            c_pie.delete("all")
+            c_line.delete("all")
+            
+            filtered = self.get_filtered()
+            exp_records = [r for r in filtered if not r.get("is_income", False)]
+            inc_records = [r for r in filtered if r.get("is_income", False)]
+            
+            w_p, h_p = c_pie.winfo_width(), c_pie.winfo_height()
+            if w_p < 100: w_p, h_p = 1000, 600
+            
+            if exp_records:
+                cat_sums = {}
+                for r in exp_records: cat_sums[r["category"]] = cat_sums.get(r["category"], 0.0) + r["money"]
+                total = sum(cat_sums.values())
+                
+                if total > 1e-9:
+                    start_angle = 0
+                    legend_y = 60
+                    c_pie.create_text(w_p//2 - 150, 30, text=f"Expense Distribution (Total: ${total:,.2f})", fill=C_FG, font=("Segoe UI", 16, "bold"))
+                    
+                    cx, cy, r_size = w_p//2 - 200, h_p//2, min(w_p, h_p)//2 - 60
+                    if r_size > 20:
+                        sorted_cats = sorted(cat_sums.items(), key=lambda x: x[1], reverse=True)
+                        
+                        for i, (cat, val) in enumerate(sorted_cats):
+                            if val <= 0: continue
+                            extent = (val / total) * 360
+                            color = PIE_COLORS[i % len(PIE_COLORS)]
+                            c_pie.create_arc(cx-r_size, cy-r_size, cx+r_size, cy+r_size, start=start_angle, extent=extent, fill=color, outline=C_BG, width=3)
+                            
+                            lx = w_p//2 + 100
+                            c_pie.create_rectangle(lx, legend_y, lx+20, legend_y+20, fill=color, outline="")
+                            c_pie.create_text(lx+35, legend_y+10, text=f"{cat}: ${val:,.2f} ({(val/total)*100:.1f}%)", fill=C_FG, anchor="w", font=("Segoe UI", 12))
+                            
+                            start_angle += extent
+                            legend_y += 35
+                else: c_pie.create_text(w_p//2, h_p//2, text="Total expenses are zero.", fill=C_MUTED, font=("Segoe UI", 14))
+            else: c_pie.create_text(w_p//2, h_p//2, text="No expense data for selected filters.", fill=C_MUTED, font=("Segoe UI", 14))
+
+            if filtered:
+                date_sums = {}
+                for r in filtered:
+                    d_str = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
+                    if d_str not in date_sums: date_sums[d_str] = {"inc": 0.0, "exp": 0.0}
+                    if r.get("is_income"): date_sums[d_str]["inc"] += r["money"]
+                    else: date_sums[d_str]["exp"] += r["money"]
+                    
+                sorted_dates = sorted(date_sums.keys())
+                if len(sorted_dates) > 1:
+                    max_val = max(max(v["inc"], v["exp"]) for v in date_sums.values())
+                    max_val = max(1.0, max_val * 1.1) 
+                    
+                    pad_x, pad_y = 80, 60
+                    w_l, h_l = c_line.winfo_width(), c_line.winfo_height()
+                    if w_l < 100: w_l, h_l = 1000, 600
+                    
+                    c_line.create_text(w_l//2, 30, text="Income vs Expense Trend", fill=C_FG, font=("Segoe UI", 16, "bold"))
+                    
+                    c_line.create_line(pad_x, h_l-pad_y, w_l-pad_x, h_l-pad_y, fill=C_MUTED, width=2) 
+                    c_line.create_line(pad_x, pad_y, pad_x, h_l-pad_y, fill=C_MUTED, width=2) 
+                    c_line.create_text(pad_x-10, pad_y, text=f"${max_val:,.0f}", fill=C_MUTED, anchor="e", font=("Segoe UI", 10))
+                    c_line.create_text(pad_x-10, h_l-pad_y, text="$0", fill=C_MUTED, anchor="e", font=("Segoe UI", 10))
+                    
+                    x_step = (w_l - 2*pad_x) / (len(sorted_dates) - 1)
+                    prev_x, prev_inc_y, prev_exp_y = None, None, None
+                    
+                    for i, d in enumerate(sorted_dates):
+                        x = pad_x + i * x_step
+                        inc_y = (h_l - pad_y) - (date_sums[d]["inc"] / max_val) * (h_l - 2*pad_y)
+                        exp_y = (h_l - pad_y) - (date_sums[d]["exp"] / max_val) * (h_l - 2*pad_y)
+                        
+                        if prev_x is not None:
+                            c_line.create_line(prev_x, prev_inc_y, x, inc_y, fill=C_INC, width=3, smooth=True)
+                            c_line.create_line(prev_x, prev_exp_y, x, exp_y, fill=C_EXP, width=3, smooth=True)
+                        
+                        c_line.create_oval(x-4, inc_y-4, x+4, inc_y+4, fill=C_INC, outline=C_PANEL)
+                        c_line.create_oval(x-4, exp_y-4, x+4, exp_y+4, fill=C_EXP, outline=C_PANEL)
+                        
+                        if len(sorted_dates) <= 15 or i % max(1, len(sorted_dates)//10) == 0:
+                            c_line.create_text(x, h_l-pad_y+20, text=d[5:], fill=C_MUTED, font=("Segoe UI", 9), angle=45)
+                            
+                        prev_x, prev_inc_y, prev_exp_y = x, inc_y, exp_y
+                    
+                    c_line.create_text(w_l-pad_x-100, 40, text="■ Income", fill=C_INC, anchor="w", font=("Segoe UI", 12))
+                    c_line.create_text(w_l-pad_x-100, 65, text="■ Expense", fill=C_EXP, anchor="w", font=("Segoe UI", 12))
+                else: c_line.create_text(w_l//2, h_l//2, text="Need at least 2 active days to draw a trend line.", fill=C_MUTED, font=("Segoe UI", 14))
+
+        def safe_draw_manager(event=None):
+            if hasattr(top, '_graph_timer'): top.after_cancel(top._graph_timer)
+            top._graph_timer = top.after(100, draw_graphs)
+
+        top.after(200, update_full_tables)
+        c_pie.bind('<Configure>', safe_draw_manager)
+        c_line.bind('<Configure>', safe_draw_manager)
 
     def _handle_sort_menu(self):
         top = tk.Toplevel(self.root)
@@ -415,7 +541,6 @@ class FinanceSystemGUI:
         self.update_ui()
 
     def _handle_time_menu(self):
-        """Upgraded Interactive Time Selection Menu"""
         top = tk.Toplevel(self.root)
         top.title("Time Scale Options")
         top.geometry("300x360")
@@ -487,24 +612,57 @@ class FinanceSystemGUI:
         tk.Button(top, text="Apply Filter", command=apply_time, bg=C_BAR, fg='#fff', relief=tk.FLAT).pack(pady=15)
 
     def _handle_category(self):
-        cats = ["All Categories"] + list(set(r["category"] for r in self.records))
+        all_cats = list(set(r["category"] for r in self.records))
+        for c in all_cats:
+            if c not in self.active_categories and c not in [r["category"] for r in self.records if r["category"] not in self.active_categories]:
+                self.active_categories.add(c)
+                
         top = tk.Toplevel(self.root)
-        top.title("Select Category")
-        top.geometry("300x400")
+        top.title("Manage Categories")
+        top.geometry("350x500")
         top.configure(bg=C_PANEL)
         top.transient(self.root)
         top.grab_set()
-        tk.Label(top, text="Click or Select Category:", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 11)).pack(pady=5)
-        listbox = tk.Listbox(top, bg=C_HEAD, fg=C_FG, font=("Segoe UI", 11), selectbackground=C_BAR, borderwidth=0)
-        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        for i, c in enumerate(cats): listbox.insert(tk.END, f"{i}: {c}")
-        def on_select(event=None):
-            if listbox.curselection():
-                self.category_filter = "All" if listbox.curselection()[0] == 0 else cats[listbox.curselection()[0]]
-                self.update_ui()
-                top.destroy()
-        listbox.bind("<Double-Button-1>", on_select)
-        listbox.bind("<Return>", on_select)
+        
+        tk.Label(top, text="Filter Active Categories", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 12, "bold")).pack(pady=10)
+        
+        f_container = tk.Frame(top, bg=C_HEAD)
+        f_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+        canvas = tk.Canvas(f_container, bg=C_HEAD, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(f_container, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=C_HEAD)
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        var_dict = {}
+        for c in all_cats:
+            var = tk.BooleanVar(value=(c in self.active_categories))
+            var_dict[c] = var
+            tk.Checkbutton(scrollable_frame, text=c, variable=var, bg=C_HEAD, fg=C_FG, selectcolor=C_PANEL, activebackground=C_HEAD, activeforeground=C_FG).pack(anchor="w", padx=10, pady=2)
+            
+        def select_all():
+            for v in var_dict.values(): v.set(True)
+            
+        def clear_all():
+            for v in var_dict.values(): v.set(False)
+            
+        def save():
+            self.active_categories = {c for c, var in var_dict.items() if var.get()}
+            if not self.active_categories:
+                messagebox.showwarning("Warning", "You hid all categories. Tables will be empty.", parent=top)
+            self.update_ui()
+            top.destroy()
+
+        btn_f1 = tk.Frame(top, bg=C_PANEL)
+        btn_f1.pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(btn_f1, text="Select All", command=select_all, bg=C_BG, fg=C_FG, relief=tk.FLAT).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn_f1, text="Clear All", command=clear_all, bg=C_BG, fg=C_FG, relief=tk.FLAT).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(top, text="Apply Category Filters", command=save, bg=C_BAR, fg='#fff', relief=tk.FLAT).pack(fill=tk.X, padx=20, pady=10)
 
     def _handle_range(self):
         max_val = max([r["money"] for r in self.records] + [100.0]) if self.records else 100.0
@@ -543,9 +701,15 @@ class FinanceSystemGUI:
                 act_t = True
         if not act_t:
             if self.auto_suggest:
-                s_str, t_days = Statistic.determine_scale([r for r in self.records if not r.get("is_income", False)], "All")
-                sug = Statistic.predict_budget([r for r in self.records if not r.get("is_income", False)], t_days)
-                tk.Label(t_frame, text=f">> Auto-Suggested {s_str}:\n${sug:,.0f}", bg=C_BG, fg=C_PUR, justify=tk.LEFT).pack(anchor='w')
+                # Reverted: Use original Statistic.py method signature (records, target_days)
+                exp = [r for r in self.records if not r.get("is_income", False)]
+                scale_str, target_days = Statistic.determine_scale(exp, "All")
+                sug = Statistic.predict_budget(exp, target_days)
+                
+                if sug > 0:
+                    tk.Label(t_frame, text=f">> Auto-Suggested {scale_str}:\n${sug:,.0f}", bg=C_BG, fg=C_PUR, justify=tk.LEFT).pack(anchor='w')
+                else:
+                    tk.Label(t_frame, text=f">> Awaiting Data...", bg=C_BG, fg=C_PUR, justify=tk.LEFT).pack(anchor='w')
             else:
                 tk.Label(t_frame, text="(None set)", bg=C_BG, fg=C_MUTED).pack(anchor='w')
 
@@ -621,7 +785,9 @@ class FinanceSystemGUI:
             entry.delete(0, tk.END)
             
             if raw.upper() == 'DONE':
-                for item in staging_buffer: self.records.append(item["record"])
+                for item in staging_buffer: 
+                    self.records.append(item["record"])
+                    self.active_categories.add(item["record"]["category"])
                 self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
                 with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
                 self.update_ui()
@@ -663,6 +829,7 @@ class FinanceSystemGUI:
             dp = Input.validate_date(e_date.get().strip())
             if dp: record["year"], record["month"], record["day"] = dp
             record["ignore_anomaly"] = bool(var_ignore.get())
+            self.active_categories.add(record["category"])
             with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
             self.update_ui()
             top.destroy()
@@ -697,7 +864,7 @@ class FinanceSystemGUI:
             if self.scale == "Year" and self.target_date and r["year"] != self.target_date["year"]: continue
             elif self.scale == "Month" and self.target_date and (r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"]): continue
             elif self.scale == "Day" and self.target_date and (r["year"] != self.target_date["year"] or r["month"] != self.target_date["month"] or r["day"] != self.target_date["day"]): continue
-            if self.category_filter != "All" and r["category"] != self.category_filter: continue
+            if r["category"] not in self.active_categories: continue
             if not (self.range_filter[0] <= r["money"] <= self.range_filter[1]): continue
             f.append(r)
         return f
@@ -713,31 +880,26 @@ class FinanceSystemGUI:
         elif self.scale == "Month" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}"
         elif self.scale == "Day" and self.target_date: td_str = f"{self.target_date['year']}-{self.target_date['month']:02d}-{self.target_date['day']:02d}"
         
+        cat_str = "Custom" if len(self.active_categories) != len(set(r["category"] for r in self.records)) else "All"
         upper_bound_str = "INF" if self.range_filter[1] == float('inf') else f"{self.range_filter[1]:.0f}"
-        self.lbl_filters.config(text=f"Time: {td_str}   |   Category: {self.category_filter}   |   Range: ${self.range_filter[0]:.0f} - ${upper_bound_str}")
+        self.lbl_filters.config(text=f"Time: {td_str}   |   Categories: {cat_str}   |   Range: ${self.range_filter[0]:.0f} - ${upper_bound_str}")
 
-        # --- DRAW DASHBOARD CARDS ON CANVAS ---
         self.card_canvas.delete("all")
         width = self.card_canvas.winfo_width()
         if width < 100: width = 1160 
-        
         card_w = (width - 15) // 2
         
-        # Draw Card 1: Overview
         create_round_rectangle(self.card_canvas, 0, 0, card_w, 120, radius=12, fill=C_PANEL, outline="")
         self.card_canvas.create_text(20, 20, text="FINANCIAL OVERVIEW", fill=C_MUTED, font=("Segoe UI", 9, "bold"), anchor="w")
-        
         self.card_canvas.create_text(20, 55, text="Total Income", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
         self.card_canvas.create_text(20, 85, text=f"${t_inc:,.2f}", fill=C_INC, font=("Segoe UI", 20, "bold"), anchor="w")
-        
         self.card_canvas.create_text(card_w//2 + 20, 55, text="Total Expense", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
         self.card_canvas.create_text(card_w//2 + 20, 85, text=f"${t_exp:,.2f}", fill=C_EXP, font=("Segoe UI", 20, "bold"), anchor="w")
         
-        # Draw Card 2: Limits & Predictions
         x_offset = card_w + 15
         create_round_rectangle(self.card_canvas, x_offset, 0, x_offset+card_w, 120, radius=12, fill=C_PANEL, outline="")
         
-        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, self.category_filter)
+        is_exc, ratio, rem, limit_name, limit_val = self.lm.check_limit(exp, self.scale, "All")
         scale_str, target_days = Statistic.determine_scale(exp, self.scale)
         
         title_str = f"LIMIT PROGRESS ({limit_name})" if limit_val > 0 else "LIMIT PROGRESS"
@@ -751,7 +913,9 @@ class FinanceSystemGUI:
             self.card_canvas.create_text(x_offset+20, 45, text="[ N/A in 'All' Time Scale ]", fill=C_FG, font=("Segoe UI", 11), anchor="w")
         elif limit_val <= 1e-9:
             if self.auto_suggest:
+                # Reverted: Call original Statistic.predict_budget(records, target_days)
                 sug = Statistic.predict_budget(exp, target_days)
+                
                 if sug > 0:
                     s_rat = min(1.0, t_exp / sug)
                     self.card_canvas.create_text(x_offset+20, 45, text=f"Auto-Suggested: ${t_exp:,.0f} / ${sug:,.0f} ({(t_exp/sug)*100:.0f}%)", fill=C_FG, font=("Segoe UI", 11), anchor="w")
@@ -766,12 +930,12 @@ class FinanceSystemGUI:
             c_color = C_EXP if is_exc else C_BAR
             create_round_rectangle(self.card_canvas, x_offset+20, bar_y, x_offset+20+min(bar_max_w, bar_max_w*ratio), bar_y+10, radius=5, fill=c_color, outline="")
 
+        # Reverted: Call original Statistic.predict_budget(records, target_days)
         pred = Statistic.predict_budget(exp, target_days)
         pred_text = f"${round(pred):,.0f}" if pred > 1e-9 and self.scale != "All" else "N/A"
         self.card_canvas.create_text(x_offset+20, 95, text=f"Predictive Budget: ", fill=C_MUTED, font=("Segoe UI", 10), anchor="w")
         self.card_canvas.create_text(x_offset+130, 95, text=pred_text, fill=C_PUR, font=("Segoe UI", 11, "bold"), anchor="w")
 
-        # --- UPDATE TABLES ---
         if self.sort_mode == "time":
             exp.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=self.sort_desc)
             inc.sort(key=lambda x: (x["year"], x["month"], x["day"]), reverse=self.sort_desc)
@@ -787,15 +951,14 @@ class FinanceSystemGUI:
         log_stats, raw_stats = Statistic.get_both_stats(exp)
         
         inc_data, exp_data = [], []
-        for i, r in enumerate(inc, 1):
+        for r in inc:
             date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
-            inc_data.append({"values": [i, date, r["category"], "Income", f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": False, "record_ref": r})
+            inc_data.append({"values": [date, r["category"], f"${r['money']:.2f}"], "is_anomaly": False, "record_ref": r})
             
-        for i, r in enumerate(exp, 1):
+        for r in exp:
             date = f"{r['year']}-{r['month']:02d}-{r['day']:02d}"
             is_ano = Statistic.is_hybrid_anomaly(r["money"], log_stats, raw_stats, pivot=1000.0, ignore_flag=r.get("ignore_anomaly", False))
-            stat = "Ignored" if r.get("ignore_anomaly") else ("ANOMALY" if is_ano else "Normal")
-            exp_data.append({"values": [i, date, r["category"], stat, f"${r['money']:.2f}", r.get("description", ""), ""], "is_anomaly": is_ano, "record_ref": r})
+            exp_data.append({"values": [date, r["category"], f"${r['money']:.2f}"], "is_anomaly": is_ano, "record_ref": r})
 
         self.inc_section.table.update_data(inc_data, True, max_v)
         self.exp_section.table.update_data(exp_data, False, max_v)

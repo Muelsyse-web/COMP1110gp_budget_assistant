@@ -1,101 +1,162 @@
-# COMP1110 Group Project: budget_assistant
+#COMP1110 Group Project: Personal Budget and Spending Assistant (PFMS)
 
-**Topic:** Topic A: Personal Budget  
-**Tutorial Subclass:** [Insert Subclass, e.g., Group 1A]  
+**Topic: Topic A:** Personal Budget and Spending Assistant
 
-## Group Members
-* Xu Mohan - 3036601604
-* Ma Xiaoyu - 3036481664
-* Wu Chung Hin Hugo - 3036582602
-* Li Xingwei - 3036452821
-* Zhang Jiaqi - 3036588979
+**Tutorial Subclass:** B08
 
----
+**Group Members**
 
-## 1. Project Overview
+Xu Mohan - 3036601604
 
-This project is an advanced Command Line Interface (CLI) based personal finance management system. It goes beyond basic tracking and display by integrating a powerful statistical engine. Key features include pixel-precision visual bar charts, Z-Score based anomaly spending alerts, and predictive budgeting using linear regression and momentum factors.
+Ma Xiaoyu - 3036481664
 
-The entire system utilizes ANSI color rendering and a "One-Letter Trigger" interaction model, eliminating the need for tedious command typing and providing an ultra-fast, seamless user experience.
+Wu Chung Hin Hugo - 3036582602
 
-## 2. File Structure and Purpose
+Li Xingwei - 3036452821
 
-* **`Main.py`**: The core application entry point. It manages the main event loop, handles the "One-Letter Trigger" UI interactions, and renders the live dashboard.
-* **`Input.py`**: Manages all data ingestion. It safely reads batch data from `.txt` files and handles manual terminal inputs with strict format validation to prevent crashes.
-* **`Limit.py`**: The logic handler for budget caps. It stores, updates, and calculates the progress ratios for both time-based limits (e.g., daily, monthly) and category-based limits.
-* **`Statistic.py`**: The mathematical engine of the app. It calculates Z-scores for anomaly detection, generates the high-precision logarithmic bar charts, and computes the trend-based budget predictions.
-* **`data.json`**: The persistent local database where all transaction records are safely serialized and stored.
+Zhang Jiaqi - 3036588979
 
-## 3. Environment & Execution
+**1. Project Overview & Problem Modeling**
 
-* **Language:** Python 3.x (3.8+ recommended)
-* **Dependencies:** Pure Python standard libraries (`json`, `os`, `sys`, `math`, `statistics`, `datetime`, `re`). No external third-party packages are required.
-* **Execution Environment:** Compatible with Windows, macOS, and Linux terminals.
-* **How to Run:** Open your terminal or command prompt in the project root directory and execute:
-    ```bash
-    python3 Main.py
-    ```
+Managing personal finances is a daily challenge characterized by frequent, fragmented spending across multiple categories. In this project, we modeled everyday spending as a computational problem.
 
-## 4. Interactive Operation Guide
+Our modeling approach:
 
-The system listens for keystrokes in real-time. You do not need to press `Enter` to trigger a command. The main control bar looks like this:
-`[T]Time:All | [C]Cat:All | [R]Range:All | [L]Limits | [I]nput | [Y]Details | [Q]uit`
+Transactions: Every transaction is modeled with discrete attributes: Date (YYYY-MM-DD), Amount (Money > 0), Category, Description, and Type (Income/Expense).
 
-### 📊 Core Data Filters
-* **`[T]` Time Scale**: Cycles through the time scale: Day -> Week -> Month -> Year -> All.
-* **`[C]` Category**: Dynamically lists all existing spending categories. Enter the corresponding number to filter.
-* **`[R]` Money Range**: Prompts you to enter a minimum and maximum amount.
+Budget Rules: Budgets are modeled as threshold values dynamically mapped to specific time scales (Daily, Weekly, Monthly, Yearly) and specific categories.
 
-### 🛡️ Budgets & Limits
-* **`[L]` Limits Management**: Set spending caps for specific time frames (e.g., $1000/month) or specific categories. The dashboard displays a real-time colored progress bar that turns red if you overspend.
+Analysis: We transcended simple aggregations by introducing statistical modeling (Hybrid Z-scores) to detect spending anomalies and linear momentum forecasting to predict future budget needs.
 
-### 📝 Data Input
-* **`[I]` Input Data**: Choose between two input methods:
-    * **`[F]`ile Batch Import**: Reads space-separated text files. Format: `YYYY-MM-DD Category Money Description`
-    * **`[T]`erminal Manual Entry**: Step-by-step strict validation for manual logging.
+While the project guidelines specify text-based interactions as a baseline, we took a step further to implement a hybrid Graphical User Interface (GUI) driven by a "One-Letter Trigger" keyboard system. This maximizes data entry efficiency while providing highly readable visual analytics.
 
-### 🔎 Details & Exit
-* **`[Y]` View Details**: Opens the detailed data panel showing a perfectly aligned table with Date, Category, Money, Z-Score Alarm Flags, and High-Resolution Bar Charts.
-* **`[Q]` Quit**: Safely exit the system. Auto-saves to `data.json`.
+**2. Execution Environment & Setup**
 
-## 5. Sample Test Cases & Scenarios
+Programming Language: Python 3.x (3.8+ recommended)
 
-To demonstrate the system's capabilities, we have designed three realistic case studies. You can test these by importing the corresponding text files using the `[I]nput` -> `[F]ile` command. 
+Dependencies: Pure Python standard libraries (json, os, sys, math, statistics, datetime, tkinter). No external third-party packages (like pandas, numpy, or matplotlib) are required.
 
-*Note: Ensure you create these sample `.txt` files in your directory to follow along.*
+Execution Environment: Compatible with Windows, macOS, and Linux desktop environments.
 
-### Scenario 1: Daily Food Budget Cap (HK$50)
-* **Goal:** Track small, frequent food purchases and alert the user if they exceed a daily budget of $50.
-* **Test Data (`test_food.txt`):**
-    ```text
-    2026-03-01 Food 30.5 Breakfast
-    2026-03-01 Food 25.0 Lunch
-    2026-03-02 Food 45.0 Dinner
-    ```
-* **How to test:** Import the file. Press `[L]` to set a daily time limit of `50`. Press `[T]` to filter by Day (`2026-03-01`). The dashboard will highlight that the limit is exceeded (111%).
+How to Run: Open your terminal or command prompt in the project root directory and execute:
 
-### Scenario 2: Monthly Transport Tracking
-* **Goal:** Evaluate transport spending over a month to see if a monthly pass is worth buying.
-* **Test Data (`test_transport.txt`):**
-    ```text
-    2026-03-01 Transport 12.0 MTR_to_HKU
-    2026-03-02 Transport 12.0 MTR_to_HKU
-    2026-03-05 Transport 85.0 Taxi_Home
-    ```
-* **How to test:** Import the file. Press `[C]` to filter by `Transport`. Press `[Y]` to view details. The $85 Taxi trip will be automatically flagged as an `ANOMALY` by the Z-score engine. 
+python Main.py
 
-### Scenario 3: Subscription Creep Detection
-* **Goal:** Detect hidden or forgotten recurring expenses over a year.
-* **Test Data (`test_subs.txt`):**
-    ```text
-    2026-01-15 Subscription 78.0 Netflix
-    2026-02-15 Subscription 78.0 Netflix
-    2026-03-15 Subscription 118.0 Netflix_Premium_Upgrade
-    ```
-* **How to test:** Import the file. Press `[C]` to filter by `Subscription`. The system's predictive budgeting will automatically forecast next month's expected subscription cost, factoring in the recent upward trend.
 
-## 6. Data Persistence
+(Note: Since this utilizes tkinter, ensure you are running it in an environment with display support).
 
-The system uses `data.json` in the root directory as the core database.
-* **First Run:** If the file does not exist, the system starts with an empty database.
-* **Auto Load & Save:** Every time `Main.py` starts, it loads the history. Whether you exit manually or encounter an unexpected interrupt, the program securely overwrites and saves the latest data to `data.json`.
+**3. File Structure & Purpose**
+
+Our codebase is strictly modularized to separate data input, logic, statistics, and UI rendering:
+
+Main.py (User Interface & Orchestrator): Manages the main event loop, handles the keystrokes, renders the live dashboard (tables, native canvas charts, budget progress bars), and orchestrates data persistence.
+
+Input.py (File I/O & Error Handling): Handles data ingestion. Safely reads batch data from .txt files and parses manual inputs. Error Handling: It strictly validates date formats (YYYY-MM-DD) and ensures money is a positive float, preventing system crashes from corrupted files.
+
+Limit.py (Budget Guard): The logic handler for rule-based alerts. It stores, updates, and calculates the progress ratios for time-based and category-based limits.
+
+Statistic.py (Mathematical Engine): Computes summary statistics. Features our custom Hybrid Z-score anomaly detection and generates predictive budgets using historical momentum.
+
+data.json (Data Model Storage): The persistent local database where all transaction records are safely serialized.
+
+Data Model Design (Schema)
+
+Transactions are stored as dictionaries in a JSON array:
+
+{
+  "year": 2026, "month": 3, "day": 1, 
+  "category": "Food", "money": 30.5, 
+  "description": "Breakfast", 
+  "is_income": false, "ignore_anomaly": false
+}
+
+
+**4. Key Features (Aligned with Topic A Requirements)**
+
+Menu Interface (One-Letter Triggers): Navigated purely via hotkeys:
+
+[T]ime, [C]ategory, [R]ange, [S]ort, [L]imits, [I]nput, [Y] Details, [Q]uit & Save.
+
+Interactive Data Management (CRUD): * Import transactions from space-separated .txt files or manual input via a staging area.
+
+Double-click any record in the tables to instantly Edit or Delete it.
+
+Advanced Summary Statistics & Visualization: * Dynamically computes total spending and time-based totals.
+
+Native Canvas Charts: The Details window ([Y]) renders custom Expense Distribution (Pie Chart) and Cashflow Trends (Line Chart) dynamically based on active filters.
+
+Rule-based Alerts: Visual warning systems (progress bars turning red) when daily/weekly/monthly limits for specific categories are exceeded.
+
+Hybrid Anomaly Detection: Instead of basic thresholding, our algorithm uses a hybrid approach: Log-Normal distribution for everyday small expenses, and Standard Normal distribution for outliers > $1000, ensuring highly accurate flagging of irregular expenses.
+
+**5. Sample Test Cases & Scenarios**
+
+To demonstrate the system's capabilities in realistic spending situations, we have designed three case studies.
+
+(Preparation: Ensure test_food.txt, test_transport.txt, and test_subs.txt are in the project root directory).
+
+Case Study 1: Daily Food Budget Cap & Editing
+
+Purpose: Test rule-based alerts, daily time-based summaries, and CRUD functionality.
+
+Scenario: A student wants to cap their daily food spending at HK$50 and needs an alert if they overspend.
+
+Test Data (test_food.txt):
+
+E 2026-03-01 Food 30.5 Breakfast
+E 2026-03-01 Food 25.0 Lunch
+E 2026-03-02 Food 45.0 Dinner
+
+
+Execution: 1. Press [I], type F test_food.txt and press Enter, then type DONE.
+2. Press [L] to open Limits, set a Daily limit for Food at 50.
+3. Press [T], select Day and enter 2026-03-01.
+
+Expected Output: The dashboard progress bar will turn red, showing $55 / $50 (110%), successfully generating an overspend warning. (You can double-click the Lunch record to change it to $10, and watch the bar turn green instantly).
+
+Case Study 2: Monthly Transport Tracking & Hybrid Anomaly Detection
+
+Purpose: Test category filtering, multi-dimensional sorting, and the Hybrid Z-Score engine.
+
+Scenario: Evaluating regular transport spending versus irregular, expensive taxi rides.
+
+Test Data (test_transport.txt):
+
+E 2026-03-01 Transport 12.0 MTR_to_HKU
+E 2026-03-02 Transport 12.0 MTR_to_HKU
+E 2026-03-03 Transport 12.0 MTR_to_HKU
+E 2026-03-05 Transport 85.0 Taxi_Home
+
+
+Execution:
+
+Press [I], import F test_transport.txt, and type DONE.
+
+Press [C] and select only Transport. Press [S] to sort by "Amount".
+
+Press [Y] to open Detailed Analytics.
+
+Expected Output: In the Full Data Table, the $85 Taxi trip will be automatically flagged as ANOMALY by the statistical engine. The Line Chart will also clearly show a spike on March 5th.
+
+Case Study 3: Subscription Creep Forecasting
+
+Purpose: Test the predictive budgeting system based on historical spending trends.
+
+Scenario: Detecting hidden or increasing recurring expenses over several months.
+
+Test Data (test_subs.txt):
+
+E 2026-01-15 Subscription 78.0 Netflix
+E 2026-02-15 Subscription 78.0 Netflix
+E 2026-03-15 Subscription 118.0 Netflix_Premium
+
+
+Execution:
+
+Press [I], import F test_subs.txt, and type DONE.
+
+Press [C] and select only Subscription.
+
+Observe the "Predictive Budget" indicator on the main dashboard.
+
+Expected Output: The statistical engine will calculate a momentum factor based on the recent price hike. It will automatically forecast next month's expected cost to be significantly higher than the simple historical average, actively warning the user of the upward subscription creep.

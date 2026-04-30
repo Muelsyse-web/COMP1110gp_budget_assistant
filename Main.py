@@ -2,7 +2,7 @@ import os
 import json
 import math
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime
 
 import Input
@@ -321,7 +321,7 @@ class FinanceSystemGUI:
         self.root.bind('<Key>', self.handle_keypress)
 
     def handle_keypress(self, event):
-        if isinstance(event.widget, (tk.Entry, tk.Text, tk.Listbox)): return
+        if isinstance(event.widget, (tk.Entry, tk.Text, tk.Listbox, ttk.Treeview, ttk.Combobox)): return
         if not event.char: return
         char = event.char.upper()
         
@@ -380,7 +380,7 @@ class FinanceSystemGUI:
         c_line.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
         def update_full_tables():
-            if not tk.Toplevel.winfo_exists(top):
+            if not top.winfo_exists():
                 self.update_full_tables_cb = None
                 return
                 
@@ -420,7 +420,7 @@ class FinanceSystemGUI:
         self.update_full_tables_cb = update_full_tables
 
         def draw_graphs():
-            if not tk.Toplevel.winfo_exists(top): return
+            if not top.winfo_exists(): return
             c_pie.delete("all")
             c_line.delete("all")
             
@@ -509,7 +509,7 @@ class FinanceSystemGUI:
                 else: c_line.create_text(w_l//2, h_l//2, text="Need at least 2 active days to draw a trend line.", fill=C_MUTED, font=("Segoe UI", 14))
 
         def safe_draw_manager(event=None):
-            if not tk.Toplevel.winfo_exists(top): return
+            if not top.winfo_exists(): return
             if hasattr(top, '_graph_timer'): top.after_cancel(top._graph_timer)
             top._graph_timer = top.after(100, draw_graphs)
 
@@ -784,61 +784,168 @@ class FinanceSystemGUI:
     def _handle_input(self):
         top = tk.Toplevel(self.root)
         top.title("Data Input Staging Area")
-        top.geometry("800x500")
+        top.geometry("1000x700")
         top.configure(bg=C_PANEL)
         top.transient(self.root)
         top.grab_set()
-        
+
         staging_buffer = []
-        lbl_text = "Manual Format: [I/E] [YYYY-MM-DD] [Category] [Amount] [Description]\n(I = Income, E = Expense)\nFile Format: F filename.txt"
-        tk.Label(top, text=lbl_text, bg=C_PANEL, fg=C_MUTED, font=("Segoe UI", 10), justify=tk.LEFT).pack(anchor='w', padx=15, pady=10)
-        
-        entry = tk.Entry(top, font=("Consolas", 12), bg=C_BG, fg=C_FG, insertbackground=C_FG, relief=tk.FLAT)
-        entry.pack(fill=tk.X, padx=15, pady=5, ipady=5)
-        entry.focus_set()
-        
-        tree = ttk.Treeview(top, columns=("raw", "status"), show="headings", height=10)
-        tree.heading("raw", text="Parsed Record")
-        tree.heading("status", text="Status")
-        tree.column("raw", width=600)
-        tree.column("status", width=150)
-        tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
-        
-        def process_cmd(event=None):
-            raw = entry.get().strip()
-            if not raw: return
-            entry.delete(0, tk.END)
+
+        # --- Top Section: Manual Input Form ---
+        form_frame = tk.LabelFrame(top, text="Manual Entry Form", bg=C_PANEL, fg=C_FG, font=("Segoe UI", 11, "bold"), padx=10, pady=10)
+        form_frame.pack(fill=tk.X, padx=15, pady=10)
+
+        var_type = tk.StringVar(value="E")
+        var_date = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        var_cat = tk.StringVar()
+        var_money = tk.StringVar()
+        var_desc = tk.StringVar()
+
+        tk.Label(form_frame, text="Type:", bg=C_PANEL, fg=C_FG).grid(row=0, column=0, padx=5, pady=5, sticky='e')
+        type_f = tk.Frame(form_frame, bg=C_PANEL)
+        type_f.grid(row=0, column=1, sticky='w')
+        tk.Radiobutton(type_f, text="Expense", variable=var_type, value="E", bg=C_PANEL, fg=C_EXP, selectcolor=C_BG).pack(side=tk.LEFT)
+        tk.Radiobutton(type_f, text="Income", variable=var_type, value="I", bg=C_PANEL, fg=C_INC, selectcolor=C_BG).pack(side=tk.LEFT)
+
+        tk.Label(form_frame, text="Date (YYYY-MM-DD):", bg=C_PANEL, fg=C_FG).grid(row=0, column=2, padx=5, pady=5, sticky='e')
+        tk.Entry(form_frame, textvariable=var_date, bg=C_BG, fg=C_FG, insertbackground=C_FG).grid(row=0, column=3, padx=5, pady=5)
+
+        tk.Label(form_frame, text="Category:", bg=C_PANEL, fg=C_FG).grid(row=0, column=4, padx=5, pady=5, sticky='e')
+        tk.Entry(form_frame, textvariable=var_cat, bg=C_BG, fg=C_FG, insertbackground=C_FG).grid(row=0, column=5, padx=5, pady=5)
+
+        tk.Label(form_frame, text="Amount:", bg=C_PANEL, fg=C_FG).grid(row=1, column=0, padx=5, pady=5, sticky='e')
+        tk.Entry(form_frame, textvariable=var_money, bg=C_BG, fg=C_FG, insertbackground=C_FG).grid(row=1, column=1, padx=5, pady=5, sticky='w')
+
+        tk.Label(form_frame, text="Description:", bg=C_PANEL, fg=C_FG).grid(row=1, column=2, padx=5, pady=5, sticky='e')
+        tk.Entry(form_frame, textvariable=var_desc, bg=C_BG, fg=C_FG, insertbackground=C_FG).grid(row=1, column=3, columnspan=2, padx=5, pady=5, sticky='we')
+
+        def add_manual():
+            typ = var_type.get()
+            # Strip and remove internal spaces so we don't accidentally offset the space-based `.split(" ", 4)` in Input.py
+            dat = var_date.get().strip().replace(" ", "") 
+            cat = var_cat.get().strip().replace(" ", "_")
+            if not cat: cat = "Uncategorized"
+            mon = var_money.get().strip().replace(" ", "")
+            desc = var_desc.get().strip()
+            if not desc: desc = "No_Description"
             
-            if raw.upper() == 'DONE':
-                for item in staging_buffer: 
-                    self.records.append(item["record"])
-                    self.active_categories.add(item["record"]["category"])
-                self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
-                with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+            raw_str = f"{typ} {dat} {cat} {mon} {desc}"
+            parsed = Input.parse_staged_line(raw_str)
+            
+            if parsed["valid"]:
+                staging_buffer.append(parsed)
+                rec = parsed['record']
+                tree_v.insert("", tk.END, values=(typ, dat, cat, f"${rec['money']:.2f}", desc))
+                var_cat.set("")
+                var_money.set("")
+                var_desc.set("")
+            else:
+                tree_i.insert("", tk.END, values=(raw_str, parsed["error"]))
+
+        tk.Button(form_frame, text="Add", command=add_manual, bg=C_BAR, fg='black', font=("Segoe UI", 10, "bold"), width=10).grid(row=1, column=5, padx=5, pady=5)
+
+        # --- Middle Section: File Import ---
+        file_frame = tk.Frame(top, bg=C_PANEL)
+        file_frame.pack(fill=tk.X, padx=15, pady=5)
+        
+        def load_file():
+            filepath = filedialog.askopenfilename(parent=top, title="Select Transaction File", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+            if not filepath:
+                return
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line: continue
+                        if line[0].upper() not in ['I', 'E'] and len(line) > 5:
+                            line = "E " + line
+                        
+                        parsed = Input.parse_staged_line(line)
+                        if parsed["valid"]:
+                            staging_buffer.append(parsed)
+                            rec = parsed['record']
+                            tree_v.insert("", tk.END, values=(rec['type'], rec['raw_date'], rec['category'], f"${rec['money']:.2f}", rec['description']))
+                        else:
+                            tree_i.insert("", tk.END, values=(line, parsed["error"]))
+            except Exception as e:
+                messagebox.showerror("File Error", f"Could not read file:\n{e}", parent=top)
+
+        tk.Button(file_frame, text="Select .txt File to Import", command=load_file, bg=C_PUR, fg='black', font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(file_frame, text=" (Batch import automatically processes all records in the file)", bg=C_PANEL, fg=C_MUTED).pack(side=tk.LEFT)
+
+        # --- Bottom Section: Tables for Validation ---
+        table_frame = tk.PanedWindow(top, orient=tk.HORIZONTAL, bg=C_BG, bd=0, sashwidth=4)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+        v_frame = tk.Frame(table_frame, bg=C_PANEL)
+        tk.Label(v_frame, text="Parsed Records (Valid & Ready)", bg=C_PANEL, fg=C_INC, font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=2)
+        tree_v = ttk.Treeview(v_frame, columns=("type", "date", "cat", "money", "desc"), show="headings", height=10)
+        tree_v.heading("type", text="T")
+        tree_v.column("type", width=30, anchor='center')
+        tree_v.heading("date", text="Date")
+        tree_v.column("date", width=90)
+        tree_v.heading("cat", text="Category")
+        tree_v.column("cat", width=110)
+        tree_v.heading("money", text="Amount")
+        tree_v.column("money", width=80, anchor='e')
+        tree_v.heading("desc", text="Description")
+        tree_v.column("desc", width=150)
+        
+        scr_v = ttk.Scrollbar(v_frame, orient="vertical", command=tree_v.yview)
+        tree_v.configure(yscrollcommand=scr_v.set)
+        tree_v.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scr_v.pack(side=tk.RIGHT, fill=tk.Y)
+        table_frame.add(v_frame, stretch="always", minsize=350)
+
+        i_frame = tk.Frame(table_frame, bg=C_PANEL)
+        tk.Label(i_frame, text="Error Records (Failed to Parse)", bg=C_PANEL, fg=C_EXP, font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=2)
+        tree_i = ttk.Treeview(i_frame, columns=("raw", "error"), show="headings", height=10)
+        tree_i.heading("raw", text="Raw Input")
+        tree_i.column("raw", width=150)
+        tree_i.heading("error", text="Error Reason")
+        tree_i.column("error", width=150)
+        
+        scr_i = ttk.Scrollbar(i_frame, orient="vertical", command=tree_i.yview)
+        tree_i.configure(yscrollcommand=scr_i.set)
+        tree_i.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scr_i.pack(side=tk.RIGHT, fill=tk.Y)
+        table_frame.add(i_frame, stretch="always", minsize=250)
+
+        # --- Commit Section ---
+        commit_frame = tk.Frame(top, bg=C_PANEL)
+        commit_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        def commit_data():
+            if not staging_buffer:
+                messagebox.showinfo("Empty", "No valid records to commit.", parent=top)
+                return
+            
+            for item in staging_buffer: 
+                # Create a completely clean schema representation so garbage keys aren't saved to data.json
+                clean_record = {
+                    "year": item["record"]["year"],
+                    "month": item["record"]["month"],
+                    "day": item["record"]["day"],
+                    "category": item["record"]["category"],
+                    "money": item["record"]["money"],
+                    "description": item["record"]["description"],
+                    "is_income": item["record"]["is_income"],
+                    "ignore_anomaly": False
+                }
+                self.records.append(clean_record)
+                self.active_categories.add(clean_record["category"])
+                
+            self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
+            try:
+                with open("data.json", "w", encoding="utf-8") as f:
+                    json.dump(self.records, f, indent=4)
+                messagebox.showinfo("Success", f"Successfully committed {len(staging_buffer)} records.", parent=top)
                 self.update_ui()
                 top.destroy()
-                return
-                
-            if raw.upper().startswith('F '):
-                try:
-                    with open(raw[2:].strip(), 'r', encoding='utf-8') as f:
-                        for line in f:
-                            if line.strip():
-                                parsed = Input.parse_staged_line(line.strip() if line.strip()[0].upper() in ['I','E'] else "E " + line.strip())
-                                if parsed["valid"]:
-                                    staging_buffer.append(parsed)
-                                    tree.insert("", tk.END, values=(parsed['raw'], "Valid"))
-                except Exception as e: messagebox.showerror("Error", str(e), parent=top)
-            else:
-                parsed = Input.parse_staged_line(raw)
-                if parsed["valid"]:
-                    staging_buffer.append(parsed)
-                    tree.insert("", tk.END, values=(parsed['raw'], "Valid"))
-                else:
-                    messagebox.showerror("Error", parsed["error"], parent=top)
-                    
-        entry.bind("<Return>", process_cmd)
-        tk.Button(top, text="Submit/Add (or type DONE to save)", command=process_cmd, bg=C_BAR, fg='black', relief=tk.FLAT, font=("Segoe UI", 10, "bold")).pack(pady=10)
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Failed to save data.json:\n{e}", parent=top)
+
+        tk.Button(commit_frame, text="Commit Valid Records to Database", command=commit_data, bg=C_INC, fg='black', font=("Segoe UI", 12, "bold"), pady=5).pack(fill=tk.X)
 
     def edit_record(self, record):
         top = tk.Toplevel(self.root)
@@ -855,13 +962,24 @@ class FinanceSystemGUI:
             if dp: record["year"], record["month"], record["day"] = dp
             record["ignore_anomaly"] = bool(var_ignore.get())
             self.active_categories.add(record["category"])
-            with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+            
+            try:
+                with open("data.json", "w", encoding="utf-8") as f:
+                    json.dump(self.records, f, indent=4)
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not save file:\n{e}", parent=top)
+                
             self.update_ui()
             top.destroy()
             
         def del_record():
             self.records.remove(record)
-            with open("data.json", "w", encoding="utf-8") as f: json.dump(self.records, f, indent=4)
+            try:
+                with open("data.json", "w", encoding="utf-8") as f:
+                    json.dump(self.records, f, indent=4)
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not save file:\n{e}", parent=top)
+                
             self.update_ui()
             top.destroy()
 

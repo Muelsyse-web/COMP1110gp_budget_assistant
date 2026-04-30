@@ -9,6 +9,10 @@ import Input
 import Limit
 import Statistic
 
+# Resolve absolute path to the current script's directory to avoid permission errors
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(BASE_DIR, "data.json")
+
 # --- MODERN WEB-INSPIRED THEME ---
 C_BG = '#0f172a'       # Deep Slate Background
 C_PANEL = '#1e293b'    # Card/Panel Background
@@ -141,7 +145,14 @@ class VirtualTable(tk.Frame):
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.body_canvas.bind("<Double-Button-1>", self._on_body_dblclick)
+        self.body_canvas.bind("<Enter>", self._bind_mouse)
+        self.body_canvas.bind("<Leave>", self._unbind_mouse)
+
+    def _bind_mouse(self, event):
         self.body_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_mouse(self, event):
+        self.body_canvas.unbind_all("<MouseWheel>")
 
     def _on_mousewheel(self, event):
         self.body_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
@@ -239,7 +250,7 @@ class FinanceSystemGUI:
         self.root.geometry("1300x800")
         self.root.configure(bg=C_BG)
         
-        self.records = Input.read_input("data.json", "json")
+        self.records = Input.read_input(DATA_FILE, "json")
         self.lm = Limit.LimitManager()
         
         self.scale = "All"
@@ -920,6 +931,10 @@ class FinanceSystemGUI:
                 messagebox.showinfo("Empty", "No valid records to commit.", parent=top)
                 return
             
+            # Backup the current state in case of failure
+            original_records = self.records.copy()
+            original_categories = self.active_categories.copy()
+            
             for item in staging_buffer: 
                 # Create a completely clean schema representation so garbage keys aren't saved to data.json
                 clean_record = {
@@ -937,12 +952,15 @@ class FinanceSystemGUI:
                 
             self.records.sort(key=lambda x: (x["year"], x["month"], x["day"]))
             try:
-                with open("data.json", "w", encoding="utf-8") as f:
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
                     json.dump(self.records, f, indent=4)
                 messagebox.showinfo("Success", f"Successfully committed {len(staging_buffer)} records.", parent=top)
                 self.update_ui()
                 top.destroy()
             except Exception as e:
+                # Rollback in memory state if save fails
+                self.records = original_records
+                self.active_categories = original_categories
                 messagebox.showerror("Save Error", f"Failed to save data.json:\n{e}", parent=top)
 
         tk.Button(commit_frame, text="Commit Valid Records to Database", command=commit_data, bg=C_INC, fg='black', font=("Segoe UI", 12, "bold"), pady=5).pack(fill=tk.X)
@@ -954,34 +972,58 @@ class FinanceSystemGUI:
         top.configure(bg=C_PANEL)
         
         def save_edits():
+            try: 
+                new_money = float(e_money.get().strip())
+                if new_money <= 0: raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Input", "Amount must be a number greater than 0.", parent=top)
+                return
+                
+            dp = Input.validate_date(e_date.get().strip())
+            if not dp:
+                messagebox.showerror("Invalid Input", "Date must be in YYYY-MM-DD format.", parent=top)
+                return
+            
+            # Create backups of original values
+            orig_cat = record["category"]
+            orig_desc = record.get("description", "")
+            orig_money = record["money"]
+            orig_y, orig_m, orig_d = record["year"], record["month"], record["day"]
+            orig_ignore = record.get("ignore_anomaly", False)
+            
             record["category"] = e_cat.get().strip()
             record["description"] = e_desc.get().strip()
-            try: record["money"] = float(e_money.get().strip())
-            except: pass
-            dp = Input.validate_date(e_date.get().strip())
-            if dp: record["year"], record["month"], record["day"] = dp
+            record["money"] = new_money
+            record["year"], record["month"], record["day"] = dp
             record["ignore_anomaly"] = bool(var_ignore.get())
             self.active_categories.add(record["category"])
             
             try:
-                with open("data.json", "w", encoding="utf-8") as f:
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
                     json.dump(self.records, f, indent=4)
+                self.update_ui()
+                top.destroy()
             except Exception as e:
+                # Rollback changes if file fails to save
+                record["category"] = orig_cat
+                record["description"] = orig_desc
+                record["money"] = orig_money
+                record["year"], record["month"], record["day"] = orig_y, orig_m, orig_d
+                record["ignore_anomaly"] = orig_ignore
                 messagebox.showerror("Save Error", f"Could not save file:\n{e}", parent=top)
-                
-            self.update_ui()
-            top.destroy()
             
         def del_record():
+            idx = self.records.index(record)
             self.records.remove(record)
             try:
-                with open("data.json", "w", encoding="utf-8") as f:
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
                     json.dump(self.records, f, indent=4)
+                self.update_ui()
+                top.destroy()
             except Exception as e:
+                # Insert the record back if file fails to save
+                self.records.insert(idx, record)
                 messagebox.showerror("Save Error", f"Could not save file:\n{e}", parent=top)
-                
-            self.update_ui()
-            top.destroy()
 
         tk.Label(top, text="Date (YYYY-MM-DD):", bg=C_PANEL, fg=C_FG).pack(pady=2)
         e_date = tk.Entry(top); e_date.insert(0, f"{record['year']}-{record['month']:02d}-{record['day']:02d}"); e_date.pack()

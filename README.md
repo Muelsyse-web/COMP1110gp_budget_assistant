@@ -40,7 +40,7 @@ Execution Environment: Compatible with Windows, macOS, and Linux desktop environ
 
 How to Run: Open your terminal or command prompt in the project root directory and execute:
 
-python Main.py
+python3 Main.py
 
 
 (Note: Since this utilizes tkinter, ensure you are running it in an environment with display support).

@@ -9,9 +9,34 @@ import Input
 import Limit
 import Statistic
 
-# Resolve absolute path to the current script's directory to avoid permission errors
+import shutil
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, "data.json")
+
+# Preferred: script directory (easy to swap test data). Fallback: home directory (always writable).
+SCRIPT_DATA = os.path.join(BASE_DIR, "data.json")
+HOME_DATA_DIR = os.path.join(os.path.expanduser("~"), ".budget_assistant")
+HOME_DATA = os.path.join(HOME_DATA_DIR, "data.json")
+
+_writable = False
+try:
+    _test = os.path.join(BASE_DIR, ".write_test")
+    with open(_test, "w") as f:
+        f.write("")
+    os.remove(_test)
+    _writable = True
+except (PermissionError, OSError):
+    pass
+
+if _writable:
+    DATA_FILE = SCRIPT_DATA
+    if not os.path.exists(SCRIPT_DATA) and os.path.exists(HOME_DATA):
+        shutil.copy2(HOME_DATA, SCRIPT_DATA)
+else:
+    os.makedirs(HOME_DATA_DIR, exist_ok=True)
+    DATA_FILE = HOME_DATA
+    if os.path.exists(SCRIPT_DATA) and not os.path.exists(HOME_DATA):
+        shutil.copy2(SCRIPT_DATA, HOME_DATA)
 
 # --- MODERN WEB-INSPIRED THEME ---
 C_BG = '#0f172a'       # Deep Slate Background
@@ -860,29 +885,59 @@ class FinanceSystemGUI:
         file_frame.pack(fill=tk.X, padx=15, pady=5)
         
         def load_file():
-            filepath = filedialog.askopenfilename(parent=top, title="Select Transaction File", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+            filepath = filedialog.askopenfilename(parent=top, title="Select Transaction File",
+                filetypes=[("Data files", "*.txt *.json"), ("Text files", "*.txt"), ("JSON files", "*.json"), ("All files", "*.*")])
             if not filepath:
                 return
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line: continue
-                        if line[0].upper() not in ['I', 'E'] and len(line) > 5:
-                            line = "E " + line
-                        
-                        parsed = Input.parse_staged_line(line)
-                        if parsed["valid"]:
-                            staging_buffer.append(parsed)
-                            rec = parsed['record']
-                            tree_v.insert("", tk.END, values=(rec['type'], rec['raw_date'], rec['category'], f"${rec['money']:.2f}", rec['description']))
-                        else:
-                            tree_i.insert("", tk.END, values=(line, parsed["error"]))
+                if filepath.lower().endswith(".json"):
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        json_records = json.load(f)
+                    if not isinstance(json_records, list):
+                        messagebox.showerror("Format Error", "JSON file must contain an array of records.", parent=top)
+                        return
+                    for r in json_records:
+                        if not isinstance(r, dict):
+                            tree_i.insert("", tk.END, values=(str(r), "Not a valid record object"))
+                            continue
+                        typ = "I" if r.get("is_income") else "E"
+                        dat = f"{r.get('year', 0)}-{r.get('month', 0):02d}-{r.get('day', 0):02d}"
+                        cat = r.get("category", "Uncategorized")
+                        mon = r.get("money", 0)
+                        desc = r.get("description", "")
+                        entry = {
+                            "valid": True, "raw": f"JSON: {cat}", "error": "",
+                            "record": {
+                                "type": typ, "raw_date": dat, "category": cat,
+                                "raw_money": str(mon), "description": desc,
+                                "year": r.get("year", 0), "month": r.get("month", 0),
+                                "day": r.get("day", 0), "money": mon,
+                                "is_income": r.get("is_income", False),
+                                "ignore_anomaly": r.get("ignore_anomaly", False)
+                            }
+                        }
+                        staging_buffer.append(entry)
+                        tree_v.insert("", tk.END, values=(typ, dat, cat, f"${mon:.2f}", desc))
+                else:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line: continue
+                            if line[0].upper() not in ['I', 'E'] and len(line) > 5:
+                                line = "E " + line
+
+                            parsed = Input.parse_staged_line(line)
+                            if parsed["valid"]:
+                                staging_buffer.append(parsed)
+                                rec = parsed['record']
+                                tree_v.insert("", tk.END, values=(rec['type'], rec['raw_date'], rec['category'], f"${rec['money']:.2f}", rec['description']))
+                            else:
+                                tree_i.insert("", tk.END, values=(line, parsed["error"]))
             except Exception as e:
                 messagebox.showerror("File Error", f"Could not read file:\n{e}", parent=top)
 
-        tk.Button(file_frame, text="Select .txt File to Import", command=load_file, bg=C_PUR, fg='black', font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
-        tk.Label(file_frame, text=" (Batch import automatically processes all records in the file)", bg=C_PANEL, fg=C_MUTED).pack(side=tk.LEFT)
+        tk.Button(file_frame, text="Select .txt/.json to Import", command=load_file, bg=C_PUR, fg='black', font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(file_frame, text=" (Batch import auto-processes all records)", bg=C_PANEL, fg=C_MUTED).pack(side=tk.LEFT)
 
         # --- Bottom Section: Tables for Validation ---
         table_frame = tk.PanedWindow(top, orient=tk.HORIZONTAL, bg=C_BG, bd=0, sashwidth=4)
